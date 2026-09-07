@@ -31,6 +31,8 @@ STEP_FIXTURE = FIXTURES / "assembly.step"
 IGES_FIXTURE = FIXTURES / "two_solids.igs"
 BOX_FIXTURE = FIXTURES / "box.stl"
 OPEN_SURFACE_FIXTURE = FIXTURES / "open_surface.stl"
+SHAFT_FIXTURE = FIXTURES / "stepped_shaft.dxf"
+PLAIN_SHAFT_FIXTURE = FIXTURES / "plain_shaft.dxf"
 
 
 def _translation(x: float, y: float, z: float) -> TopLoc_Location:
@@ -139,6 +141,91 @@ def write_meshes() -> None:
     _report(OPEN_SURFACE_FIXTURE)
 
 
+def write_drawings() -> None:
+    """Two turned parts, drawn the way a drawing office draws them.
+
+    Not a tidy list of profile edges: the outline is mirrored about the centre
+    line, the bore is dashed, and there are dimensions, notes and a title block
+    on top. All of that is what the reader has to see past, so leaving it out
+    would make the tests agree with an easier problem than the real one.
+
+    Both are drawn full size in millimetres, and both have a volume that can be
+    worked out by hand -- which is what the tests check.
+    """
+    import ezdxf
+
+    def new_document():
+        # setup=True brings in the standard linetypes, CENTER and HIDDEN among
+        # them. They are how a drawing says "this is an axis" and "this edge is
+        # behind the material", and both are load bearing here.
+        doc = ezdxf.new("R2010", setup=True)
+        doc.header["$INSUNITS"] = 4  # millimetres
+        doc.layers.add("OUTLINE")
+        doc.layers.add("CENTER", linetype="CENTER")
+        doc.layers.add("HIDDEN", linetype="HIDDEN")
+        doc.layers.add("DIMENSIONS")
+        doc.layers.add("TITLE")
+        return doc
+
+    def outline(msp, points: list[tuple[float, float]]) -> None:
+        """The chain, and its mirror image below the axis."""
+        for (x1, y1), (x2, y2) in zip(points, points[1:], strict=False):
+            msp.add_line((x1, y1), (x2, y2), dxfattribs={"layer": "OUTLINE"})
+            msp.add_line((x1, -y1), (x2, -y2), dxfattribs={"layer": "OUTLINE"})
+
+    def clutter(msp, length: float, height: float, note: str) -> None:
+        """Everything on the sheet that is not the part."""
+        msp.add_linear_dim(
+            base=(0, height + 12), p1=(0, height), p2=(length, height)
+        ).render()
+        msp.add_text(
+            note, dxfattribs={"layer": "DIMENSIONS", "height": 3}
+        ).set_placement((2, height + 18))
+        # A title block, well away from the part, on its own layer.
+        for a, b in [
+            ((-20, -60), (length + 20, -60)),
+            ((length + 20, -60), (length + 20, -40)),
+            ((length + 20, -40), (-20, -40)),
+            ((-20, -40), (-20, -60)),
+        ]:
+            msp.add_line(a, b, dxfattribs={"layer": "TITLE"})
+
+    # A stepped shaft with a through bore. Hollow, so the profile is closed by
+    # the bore rather than by the axis: 10 for 30, then 15 for 40, then 8 for
+    # 20, bored 4 the whole way.
+    #   pi * (10^2*30 + 15^2*40 + 8^2*20) - pi * 4^2*90 = pi * 11840 mm3
+    doc = new_document()
+    msp = doc.modelspace()
+    outline(
+        msp,
+        [(0, 4), (0, 10), (30, 10), (30, 15), (70, 15), (70, 8), (90, 8), (90, 4)],
+    )
+    for y in (4, -4):
+        msp.add_line((0, y), (90, y), dxfattribs={"layer": "HIDDEN"})
+    msp.add_line((-8, 0), (98, 0), dxfattribs={"layer": "CENTER"})
+    clutter(msp, 90, 15, "MATERIAL: C45")
+    doc.saveas(SHAFT_FIXTURE)
+    _report(SHAFT_FIXTURE)
+
+    # A plain cylinder, 10 radius over 50. Solid, so the end faces are drawn
+    # straight across the centre line and the profile is closed by the axis
+    # itself -- the other of the two cases, and the reason there are two files.
+    #   pi * 10^2 * 50 = pi * 5000 mm3
+    doc = new_document()
+    msp = doc.modelspace()
+    for a, b in [
+        ((0, -10), (0, 10)),
+        ((0, 10), (50, 10)),
+        ((50, 10), (50, -10)),
+        ((50, -10), (0, -10)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "OUTLINE"})
+    msp.add_line((-8, 0), (58, 0), dxfattribs={"layer": "CENTER"})
+    clutter(msp, 50, 10, "MATERIAL: 304")
+    doc.saveas(PLAIN_SHAFT_FIXTURE)
+    _report(PLAIN_SHAFT_FIXTURE)
+
+
 def _report(path: Path) -> None:
     print(f"wrote {path.name} ({path.stat().st_size} bytes)")
 
@@ -148,6 +235,7 @@ def main() -> None:
     write_step()
     write_iges()
     write_meshes()
+    write_drawings()
 
 
 if __name__ == "__main__":

@@ -42,6 +42,12 @@ export async function uploadCadFile(
   file: File,
   target: UploadTarget,
   onStage: (stage: UploadStage) => void,
+  /**
+   * How long the part is along its axis, in millimetres, for a file that
+   * carries a shape without a size. Sent as given; the server decides whether
+   * the file is one where it means anything.
+   */
+  lengthMm?: number,
 ): Promise<UploadResult> {
   const rejection = rejectionReason(file.name);
   if (rejection) throw new Error(rejection);
@@ -59,6 +65,7 @@ export async function uploadCadFile(
       filename: file.name,
       contentType,
       sizeBytes: file.size,
+      lengthMm,
     }),
   });
 

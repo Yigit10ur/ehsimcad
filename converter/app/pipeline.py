@@ -39,7 +39,16 @@ def choose_deflection(bbox_diagonal_mm: float) -> float:
     return min(max(proposed, settings.min_deflection), settings.max_deflection)
 
 
-def convert(source: Path, out_glb: Path) -> ConversionResult:
+def convert(
+    source: Path, out_glb: Path, length_mm: float | None = None
+) -> ConversionResult:
+    """Read a file and write the .glb and metadata the viewer opens.
+
+    `length_mm` is how long the part is along its axis, for a source that
+    carries a shape without a size. Only a printed sheet is one; everything
+    else states its own units, and passing a length with one would be a way to
+    quietly rescale a model that was already right.
+    """
     suffix = source.suffix.lower()
 
     if suffix not in SUPPORTED_FORMATS:
@@ -56,7 +65,7 @@ def convert(source: Path, out_glb: Path) -> ConversionResult:
         if suffix == ".pdf":
             from app.cad import pdf
 
-            return pdf.convert(source, out_glb)
+            return pdf.convert(source, out_glb, length_mm=length_mm)
 
         if suffix in DRAWING_FORMATS:
             from app.cad import drawing

@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { db, schema } from '@/db';
 import { env } from '@/lib/env';
-import { extensionOf, formatOf, rejectionReason } from '@/lib/formats';
+import { extensionOf, formatOf, needsLength, rejectionReason } from '@/lib/formats';
 import { canWrite, currentUser, personalProject, readableProjects } from '@/lib/session';
 import { presignUpload, storageKeys } from '@/lib/storage';
 
@@ -18,6 +18,12 @@ const createSchema = z.object({
   filename: z.string().min(1),
   contentType: z.string().default('application/octet-stream'),
   sizeBytes: z.number().int().positive(),
+  /**
+   * How long the part is along its axis, in millimetres. Only meaningful for a
+   * file that carries a shape without a size -- a printed sheet -- and ignored
+   * everywhere else, so that a stray value cannot quietly rescale a STEP file.
+   */
+  lengthMm: z.number().positive().max(1_000_000).optional(),
 });
 
 const unauthorized = () => NextResponse.json({ error: 'not signed in' }, { status: 401 });
@@ -54,8 +60,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
 
-  const { name, description, projectId: requested, filename, contentType, sizeBytes } =
-    body.data;
+  const {
+    name,
+    description,
+    projectId: requested,
+    filename,
+    contentType,
+    sizeBytes,
+    lengthMm,
+  } = body.data;
 
   const rejection = rejectionReason(filename);
   if (rejection) return NextResponse.json({ error: rejection }, { status: 415 });
@@ -95,6 +108,9 @@ export async function POST(request: Request) {
       sourceFilename: filename,
       sourceFormat: formatOf(filename),
       sourceSizeBytes: sizeBytes,
+      // Kept only where it means something. A length sent with a STEP file is
+      // a mistake or a probe; either way it must not reach the converter.
+      sourceLengthMm: needsLength(filename) ? (lengthMm ?? null) : null,
       createdBy: user.id,
     })
     .returning();

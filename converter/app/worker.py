@@ -41,7 +41,8 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, model_id, version_no, source_key, source_filename, source_format
+RETURNING id, model_id, version_no, source_key, source_filename, source_format,
+          source_length_mm
 """
 
 # A worker that dies mid-job leaves its row claimed forever. Nothing else would
@@ -155,7 +156,9 @@ def process(conn: psycopg.Connection, job: dict[str, Any]) -> None:
         source = download(source_key, root / Path(source_key).name)
         out_glb = root / "model.glb"
 
-        result = convert(source, out_glb)
+        # Only a drawing has one, and only when whoever uploaded it knew. The
+        # readers that cannot use it ignore it.
+        result = convert(source, out_glb, length_mm=job.get("source_length_mm"))
 
         glb_key = sibling_key(source_key, "model.glb")
         metadata_key = sibling_key(source_key, "metadata.json")

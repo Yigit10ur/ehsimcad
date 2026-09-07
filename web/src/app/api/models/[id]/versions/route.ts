@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { db, schema } from '@/db';
 import { env } from '@/lib/env';
-import { extensionOf, formatOf, rejectionReason } from '@/lib/formats';
+import { extensionOf, formatOf, needsLength, rejectionReason } from '@/lib/formats';
 import { currentUser, writableModel } from '@/lib/session';
 import { presignUpload, storageKeys } from '@/lib/storage';
 
@@ -14,6 +14,12 @@ const bodySchema = z.object({
   filename: z.string().min(1),
   contentType: z.string().default('application/octet-stream'),
   sizeBytes: z.number().int().positive(),
+  /**
+   * How long the part is along its axis, in millimetres. Only meaningful for a
+   * file that carries a shape without a size -- a printed sheet -- and ignored
+   * everywhere else, so that a stray value cannot quietly rescale a STEP file.
+   */
+  lengthMm: z.number().positive().max(1_000_000).optional(),
 });
 
 /** Add a revision. The previous version keeps its own files and stays viewable. */
@@ -61,6 +67,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       sourceFilename: filename,
       sourceFormat: formatOf(filename),
       sourceSizeBytes: sizeBytes,
+      // Kept only where it means something -- see the same line in
+      // `api/models/route.ts`.
+      sourceLengthMm: needsLength(filename) ? (body.data.lengthMm ?? null) : null,
       createdBy: user.id,
     })
     .returning();

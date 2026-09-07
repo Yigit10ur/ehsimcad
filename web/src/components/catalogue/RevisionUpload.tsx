@@ -3,7 +3,10 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
+import { needsLength } from '@/lib/formats';
 import { stageLabel, uploadCadFile, type UploadStage } from '@/lib/upload';
+
+import { LengthPrompt } from './LengthPrompt';
 
 interface Props {
   modelId: string;
@@ -23,6 +26,7 @@ export function RevisionUpload({ modelId, converting }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<UploadStage>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState<File | null>(null);
 
   const busy = stage !== 'idle';
 
@@ -34,11 +38,11 @@ export function RevisionUpload({ modelId, converting }: Props) {
     return () => clearInterval(timer);
   }, [converting, router]);
 
-  async function upload(file: File) {
+  async function upload(file: File, lengthMm?: number) {
     setError(null);
 
     try {
-      await uploadCadFile(file, { modelId }, setStage);
+      await uploadCadFile(file, { modelId }, setStage, lengthMm);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -49,7 +53,21 @@ export function RevisionUpload({ modelId, converting }: Props) {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="relative flex items-center gap-2">
+      {waiting && (
+        <div className="absolute top-full right-0 z-20 pt-2">
+          <LengthPrompt
+            filename={waiting.name}
+            onUpload={(lengthMm) => {
+              const file = waiting;
+              setWaiting(null);
+              void upload(file, lengthMm);
+            }}
+            onCancel={() => setWaiting(null)}
+          />
+        </div>
+      )}
+
       {converting && !busy && (
         <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
           converting…
@@ -73,7 +91,9 @@ export function RevisionUpload({ modelId, converting }: Props) {
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
-          if (file) void upload(file);
+          if (!file) return;
+          if (needsLength(file.name)) setWaiting(file);
+          else void upload(file);
         }}
       />
     </div>

@@ -47,3 +47,25 @@ def test_the_self_check_agrees_that_this_environment_works():
     from app import selfcheck
 
     assert selfcheck.run() == []
+
+
+def test_a_length_reaches_the_reader_that_can_use_it(monkeypatch, tmp_path):
+    """Dispatch carries it through; the readers that cannot use it never see it.
+
+    Checked here rather than only in the geometry tests because those are
+    skipped where OCCT is not installed, which is every pull request -- and a
+    length dropped between the queue and the reader looks like nothing at all.
+    """
+    from app.cad import pdf
+
+    asked: list[float | None] = []
+    monkeypatch.setattr(
+        pdf, "convert", lambda source, out, length_mm=None: asked.append(length_mm)
+    )
+    monkeypatch.setattr("app.cad.occt.available", lambda: True)
+
+    source = tmp_path / "sheet.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+    convert(source, tmp_path / "out.glb", length_mm=90.0)
+
+    assert asked == [90.0]

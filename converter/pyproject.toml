@@ -38,7 +38,18 @@ dependencies = [
 # tests that do not touch geometry. Installed in the Docker image and in the
 # local dev environment once the week-1 spike lands.
 cad = [
-    "cadquery-ocp>=7.7",
+    # Pinned below 8, and the ceiling is the point of the line.
+    #
+    # A floor alone is what shipped a broken image: 8.0 appeared, the build
+    # took it, and the binding changed underneath the code -- static methods
+    # lost the `_s` suffix they are called by in twenty-five places, and
+    # `Bnd_Box.Get` stopped returning anything Python can read. Every
+    # conversion failed, STEP included, and nothing said so until a real file
+    # went through a real worker.
+    #
+    # Moving to 8 is a port, not an upgrade. Raise the ceiling when it has been
+    # done and `python -m app.selfcheck` passes against it.
+    "cadquery-ocp>=7.9,<8",
 ]
 dev = [
     "pytest>=8.3",

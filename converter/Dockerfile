@@ -23,6 +23,16 @@ COPY app ./app
 
 RUN pip install --upgrade pip && pip install ".[cad]"
 
+# Build a shape and convert it, here, now.
+#
+# An image whose OpenCascade cannot be called still builds, still starts, still
+# claims jobs off the queue, and fails every one of them. That is what happened
+# when `cadquery-ocp` was pinned by a floor alone: a new major version appeared,
+# the install took it, and the first thing to notice was a real upload. A build
+# that stops here costs minutes; the alternative costs somebody else's
+# afternoon.
+RUN python -m app.selfcheck
+
 # Nothing here needs root, and a conversion is the code most likely to be fed
 # something hostile: it parses untrusted files for a living.
 RUN useradd --create-home --uid 10001 converter && chown -R converter /srv

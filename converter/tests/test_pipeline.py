@@ -30,3 +30,20 @@ def test_derived_files_land_next_to_the_source():
     assert (
         sibling_key(source, "metadata.json") == "proj-1/model-2/version-3/metadata.json"
     )
+
+
+def test_the_self_check_agrees_that_this_environment_works():
+    """The check the image build runs, run here too.
+
+    Skipped without OCCT, like everything else that touches geometry -- which
+    is exactly why it cannot be the only place this is checked, and why the
+    build runs it as well.
+    """
+    from app.cad import occt
+
+    if not occt.available():
+        pytest.skip("OCCT bindings not installed")
+
+    from app import selfcheck
+
+    assert selfcheck.run() == []

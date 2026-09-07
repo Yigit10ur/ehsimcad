@@ -5,10 +5,13 @@ to be picked up cold: the decisions below are the ones that would otherwise
 have to be re-derived from the code, and the measurements are the ones nobody
 should have to take twice.
 
-Started 2026-08-24. This snapshot: 2026-09-03, `main` at `1e9b59d`.
-(A commit is what this names, not a count: the merge that lands an update to
-this file is itself counted, so a number written here is wrong before it is
-pushed. It was, twice.)
+Started 2026-08-24. This snapshot: 2026-09-07, describing `main` through
+`999b3ff`.
+
+(A commit, and "through" rather than "at". It was a count twice and wrong both
+times, because the merge that lands an update to this file is itself counted --
+a number here is stale before it is pushed. Naming the last commit whose work is
+described leaves a correction to this paragraph free to be its own commit.)
 
 ---
 

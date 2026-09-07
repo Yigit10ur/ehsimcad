@@ -32,7 +32,7 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-377 tests pass: 299 in `web` (vitest, against an in-process Postgres), 78 in
+386 tests pass: 308 in `web` (vitest, against an in-process Postgres), 78 in
 `converter` (pytest; the geometry ones skip where OCCT is not installed, which
 is CI -- the drawing reader does not, because deciding what a drawing means is
 where being wrong is invisible).
@@ -530,7 +530,7 @@ with GitHub breaks the moment the domain moves without it.
 | `lib/mail.ts` | The provider, reached over plain HTTP. Logs instead of sending when unconfigured. |
 | `lib/storage.ts` | Presigned URLs, the storage key layout, and deletion -- one request per key, because every S3 implementation answers the single-object form and the batch one reports partial failure in the body rather than the status. |
 | `lib/upload.ts` | The three-step upload, in one place so a new model and a new revision cannot drift apart. |
-| `lib/formats.ts` | What is accepted, and the rejection message that fits the file. DXF is accepted; DWG is sent to DXF rather than to a modelling application, because it is one menu item away. |
+| `lib/formats.ts` | One list of what is accepted, read by both the catalogue heading and the rejection so they cannot disagree. The message fits the file: DWG and a scan of a drawing are both sent to DXF, which is where their holder can actually get to. |
 | `lib/converter.ts` | Asks GitHub to start a conversion run. Built from `GITHUB_REPOSITORY`, and silent when it fails: an upload that cannot summon a worker is still a good upload. |
 | `lib/models.ts` | Who may delete a model, and deleting one. The rule is a pure function so the route and the catalogue cannot disagree about whether to draw the button. |
 | `lib/env.ts` | Validated environment, including the upload size limit. |

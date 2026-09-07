@@ -368,12 +368,27 @@ Yalnızca tek tip tahmin yapılır, çünkü yapmaya değecek kadar dar olan tek
 budur: tornalanmış parça, bir eksen etrafında döndürülmüş bir profildir ve resim
 ikisini de gösterir.
 
+Bu yolla iki dosya okunur. **DXF** her işaretin ne olduğunu söyler, dolayısıyla
+filtreler varlık tipine göredir. **PDF** — aynı çizimin basılmış hâli — yalnızca
+her işaretin nasıl çizildiğini söyler, dolayısıyla filtreler nasıl'a göredir:
+her harf ve her ok ucu doludur ve asla çizgi değildir, bu tek test açıklamaları
+parçadan ayırır; kesik çizgi ise ya bir çizgi üzerindeki desen ya da arka arkaya
+kısa çizgiler olarak gelir, eksen çizgisi böyle bulunur. İkisi de aynı yerde
+biter ve oradan sonra hiçbir şey hangisi olduğunu bilmez.
+
 | Adım | Yapılan | Reddedilen |
 |---|---|---|
-| Açıklamalar | Ölçüler, notlar, tarama, kılavuz çizgiler ve bloklar DXF varlık tipine göre atılır; kapalı, dondurulmuş ya da basılmayan katmanlardaki her şey de | — |
+| Açıklamalar | Ölçüler, notlar, tarama, kılavuz çizgiler ve bloklar DXF varlık tipine göre atılır; kapalı, dondurulmuş ya da basılmayan katmanlardaki her şey de. PDF'te ise dolu olan her şey | — |
 | Eksen | Çizgi tipi CENTER'a çözülen ya da katmanı CENTER / CENTRE / AXIS / EKSEN olan en uzun çizgi | Eksen çizgisi olmayan resim. Hiçbir şey eksen uydurmaz |
 | Profil | Eksenin iki yanında da kapalı konturlar kurulur, ekseni kesenler orada kesilir; eksene yaslanan kontur seçilir | Kapanmayan kontur; tek noktada buluşan üç uç |
 | Katı | `BRepPrimAPI_MakeRevol`, tam tur | Eksen çizgisini kesen yay; doğrulanmayan döndürme |
+| Ölçek (yalnızca PDF) | Biliniyorsa parçanın kendi ekseni boyunca uzunluğu. Bilinmiyorsa sayfa 1:1 basılmış sayılır ve bu varsayım, ima ettiği uzunlukla birlikte yazılır | — |
+
+PDF çember çizemez: yay, CAD'den yay olarak çıkar ve iki ya da üç kübik olarak
+gelir. Her biri geldiği çembere geri uydurulur — her örnek noktasına karşı
+denetlenerek, çünkü düz bir parça da devasa yarıçaplı bir çembere gayet iyi
+uyar — ve parçalar yeniden birleştirilir, böylece pah üç yüzey değil tek yüzey
+olur.
 
 Eksenin neden asla tahmin edilmediği: eksen, parçadaki bütün çapları belirler.
 Yanlış tahmin edilmiş bir eksen, bozuk olduğu belli bir model üretmez — her
@@ -393,6 +408,7 @@ taraf döndürüldü, kesit ne kadar. `ignored`, sayfada olup parçaya girmeyend
 resim bunu orada söyler, başka hiçbir yerde söylemez. İkisi de viewer'ın
 özellikler panelinde, her sayının üstünde gösterilir.
 
-Görüntü değil DXF: DXF'te açıklamalar ayrı bir varlık tipidir, dolayısıyla
-parçayı sayfadan ayırmak bir görüntü işleme problemi değil, bir filtredir.
-Burada hiçbir şey piksel okumaz.
+Görüntü değil DXF ya da PDF: ikisinde de açıklamalar, dosyanın kendi söylediği
+bir şeyle ayrılabilir; yani parçayı sayfadan ayırmak bir görüntü işleme problemi
+değil, bir filtredir. Ve geometri geometridir — çizgi, koyu piksel dizisi değil,
+koordinatlı bir çizgidir. Burada hiçbir şey piksel okumaz.

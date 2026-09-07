@@ -33,6 +33,9 @@ BOX_FIXTURE = FIXTURES / "box.stl"
 OPEN_SURFACE_FIXTURE = FIXTURES / "open_surface.stl"
 SHAFT_FIXTURE = FIXTURES / "stepped_shaft.dxf"
 PLAIN_SHAFT_FIXTURE = FIXTURES / "plain_shaft.dxf"
+PRINTED_FIXTURE = FIXTURES / "stepped_shaft_printed.pdf"
+PLOTTED_FIXTURE = FIXTURES / "stepped_shaft_plotted.pdf"
+FILLETED_FIXTURE = FIXTURES / "filleted_shaft_plotted.pdf"
 
 
 def _translation(x: float, y: float, z: float) -> TopLoc_Location:
@@ -226,6 +229,104 @@ def write_drawings() -> None:
     _report(PLAIN_SHAFT_FIXTURE)
 
 
+def write_printed_sheets() -> None:
+    """The same shaft as two PDFs, drawn the two ways a PDF can be dashed.
+
+    A dashed stroke reaches a PDF either as a pattern set on a whole line or as
+    a row of short lines already broken up, and which one depends on what wrote
+    the file rather than on what the drawing means. The centre line is found
+    from that pattern, so a reader tested against only one of them is tested
+    against half the problem.
+
+    `_printed` is the DXF put through a renderer, which breaks the dashes up.
+    `_plotted` is the same geometry drawn with real dash patterns. Both are
+    the same part, and the tests hold both to the same volume as the DXF.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import ezdxf
+    import matplotlib.pyplot as plt
+    from ezdxf.addons.drawing import Frontend, RenderContext
+    from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
+    from matplotlib.patches import Arc
+
+    doc = ezdxf.readfile(SHAFT_FIXTURE)
+    figure = plt.figure(figsize=(11.69, 8.27))  # A4, landscape
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_axis_off()
+    Frontend(RenderContext(doc), MatplotlibBackend(axes)).draw_layout(
+        doc.modelspace(), finalize=True
+    )
+    figure.savefig(PRINTED_FIXTURE, format="pdf")
+    plt.close(figure)
+    _report(PRINTED_FIXTURE)
+
+    # The same outline, drawn as strokes carrying their own dash patterns.
+    outline = [(0, 4), (0, 10), (30, 10), (30, 15), (70, 15), (70, 8), (90, 8), (90, 4)]
+    figure = plt.figure(figsize=(11.69, 8.27))
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_axis_off()
+    # Equal, or the sheet carries a stretched part: a drawing plotted with a
+    # different scale across than up is a different shaft, and nothing in the
+    # geometry says it was not meant.
+    axes.set_aspect("equal")
+    axes.set_xlim(-30, 120)
+    axes.set_ylim(-55, 55)
+
+    for sign in (1, -1):
+        xs = [x for x, _ in outline]
+        ys = [sign * y for _, y in outline]
+        axes.plot(xs, ys, linestyle="-", color="k", lw=0.7)
+        # The bore, dashed: one mark length repeating, which is what makes it
+        # an edge behind material rather than an axis.
+        axes.plot(
+            [0, 90], [sign * 4, sign * 4], linestyle=(0, (4, 2)), color="k", lw=0.7
+        )
+
+    # The axis: two mark lengths in turn, long and short.
+    axes.plot([-8, 98], [0, 0], linestyle=(0, (8, 2, 1, 2)), color="k", lw=0.7)
+    axes.text(2, 20, "MATERIAL: C45", fontsize=8)
+
+    figure.savefig(PLOTTED_FIXTURE, format="pdf")
+    plt.close(figure)
+    _report(PLOTTED_FIXTURE)
+
+    # A shaft with a radius on one corner, which is the case a PDF is worst at
+    # and the reader has to be good at: an arc leaves the CAD application as an
+    # arc, reaches the PDF as cubics because that is all a PDF draws, and has
+    # to be fitted back. A row of chords would close and revolve just the same,
+    # and would not be a fillet.
+    figure = plt.figure(figsize=(8, 6))
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_axis_off()
+    axes.set_aspect("equal")
+    axes.set_xlim(-15, 65)
+    axes.set_ylim(-30, 30)
+
+    for sign in (1, -1):
+        axes.plot([0, 0], [0, sign * 10], color="k", lw=0.7)
+        axes.plot([0, 45], [sign * 10, sign * 10], color="k", lw=0.7)
+        axes.add_patch(
+            Arc(
+                (45, sign * 5),
+                10,
+                10,
+                theta1=0 if sign > 0 else -90,
+                theta2=90 if sign > 0 else 0,
+                lw=0.7,
+                color="k",
+            )
+        )
+        axes.plot([50, 50], [sign * 5, 0], color="k", lw=0.7)
+
+    axes.plot([-8, 58], [0, 0], linestyle=(0, (8, 2, 1, 2)), color="k", lw=0.7)
+
+    figure.savefig(FILLETED_FIXTURE, format="pdf")
+    plt.close(figure)
+    _report(FILLETED_FIXTURE)
+
+
 def _report(path: Path) -> None:
     print(f"wrote {path.name} ({path.stat().st_size} bytes)")
 
@@ -236,6 +337,7 @@ def main() -> None:
     write_iges()
     write_meshes()
     write_drawings()
+    write_printed_sheets()
 
 
 if __name__ == "__main__":

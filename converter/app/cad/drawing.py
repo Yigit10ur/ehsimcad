@@ -477,17 +477,37 @@ def _polygon(curves: list[Curve]) -> list[Point]:
 
 
 def section_area(curves: list[Curve]) -> float:
-    """The area the outline encloses: the section that gets revolved."""
-    points = _polygon(curves)
-    return (
-        abs(
-            sum(
-                points[i][0] * points[i - 1][1] - points[i - 1][0] * points[i][1]
-                for i in range(len(points))
-            )
-        )
-        / 2
-    )
+    """The area the outline encloses: the section that gets revolved.
+
+    Exact, arcs included, because the figure is shown to whoever opens the
+    model. Corner to corner and ignore the bulge is out by a fraction of a
+    percent on a filleted part -- small, and still a wrong number on a screen.
+
+    Each piece contributes its own part of the same contour integral, so
+    nothing here has to reason about which way round the outline was walked or
+    which side of its chord an arc leans: getting that wrong is how an area
+    comes out plausible and wrong, and this way there is nothing to get wrong.
+    """
+    total = 0.0
+
+    for curve in curves:
+        if not curve.is_arc:
+            x1, y1 = curve.start
+            x2, y2 = curve.end
+            total += (x1 * y2 - x2 * y1) / 2
+            continue
+
+        cx, cy = curve.centre  # type: ignore[misc]
+        radius = math.dist(curve.centre, curve.start)  # type: ignore[arg-type]
+        a0 = math.atan2(curve.start[1] - cy, curve.start[0] - cx)
+        a1 = a0 + curve._sweep()
+        total += (
+            cx * radius * (math.sin(a1) - math.sin(a0))
+            - cy * radius * (math.cos(a1) - math.cos(a0))
+            + radius**2 * (a1 - a0)
+        ) / 2
+
+    return abs(total)
 
 
 def _loops_on(
@@ -524,6 +544,15 @@ def _loops_on(
     return [loop for loop in loops if section_area(loop) > tol * tol]
 
 
+def _signature(candidate: tuple[float, float, int, list[Curve]]) -> tuple[float, float]:
+    """How near the axis a closed outline lies, and how much it encloses.
+
+    Enough to recognise an outline's own reflection, which is the only thing
+    that has to be recognised.
+    """
+    return (round(candidate[0], 6), round(candidate[1], 6))
+
+
 def profile_of(
     outline: list[Curve], axis: Axis, tol: float
 ) -> tuple[list[Curve], list[str], list[str]]:
@@ -535,11 +564,15 @@ def profile_of(
     side. What identifies the profile is that it is the closed outline lying
     against the axis, and that holds whichever side it was drawn on.
     """
-    candidates: list[tuple[float, float, int, list[Curve]]] = []
+    by_side: dict[int, list[tuple[float, float, int, list[Curve]]]] = {}
     for keep in (1, -1):
+        found = []
         for loop in _loops_on(outline, axis, keep, tol):
             distance = min(abs(axis.signed_distance(p)) for p in _polygon(loop))
-            candidates.append((distance, -section_area(loop), keep, loop))
+            found.append((distance, -section_area(loop), keep, loop))
+        by_side[keep] = found
+
+    candidates = by_side[1] + by_side[-1]
 
     if not candidates:
         raise DrawingError(
@@ -559,10 +592,20 @@ def profile_of(
             f"bored: the section stops {distance:.3f} mm short of the axis"
         )
 
-    # A symmetric drawing offers the same outline twice, once per side. Its own
-    # reflection is not another outline, and counting it as one would report a
-    # part of the drawing left out that is not there.
-    others = len({(round(c[0], 6), round(c[1], 6)) for c in candidates}) - 1
+    # A symmetric drawing offers the same outline twice, once per side, and its
+    # own reflection is not another outline. Matched off one side against the
+    # other rather than by collapsing everything that looks alike: four
+    # identical views in a row are four, and saying one would be a quieter kind
+    # of wrong.
+    unmatched = [_signature(c) for c in by_side[1]]
+    others = len(unmatched)
+    for candidate in by_side[-1]:
+        signature = _signature(candidate)
+        if signature in unmatched:
+            unmatched.remove(signature)
+        else:
+            others += 1
+    others -= 1  # the one being revolved
     ignored = []
     if others == 1:
         ignored.append("1 other closed outline on the sheet")
@@ -574,7 +617,22 @@ def profile_of(
 
 def read_profile(source: Path) -> Profile:
     """A DXF drawing of a turned part, read down to the outline to revolve."""
-    outline, candidates, units, ignored = read_curves(source)
+    return profile_from(*read_curves(source))
+
+
+def profile_from(
+    outline: list[Curve],
+    candidates: list[Curve],
+    units: str,
+    ignored: list[str],
+) -> Profile:
+    """Everything after the file has been read, whatever read it.
+
+    A DXF and a printed sheet arrive as different files and end up as the same
+    thing: curves, and the ones among them that were drawn as a centre line.
+    From here on there is nothing left that knows which it was, which is why
+    this is one function rather than two.
+    """
     if not outline:
         raise DrawingError(
             "the drawing has no lines or arcs outside its dimensions and notes."

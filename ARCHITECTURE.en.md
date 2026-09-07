@@ -394,6 +394,13 @@ every measurement and section tool works on it unchanged. What is uncertain is
 not the numbers but whether it is the right part, which is what the label and
 the recorded assumptions are for.
 
+The record is two lists, kept apart because they answer different questions.
+`assumptions` is what the reading decided -- which line was taken for the axis,
+which side was revolved, how large the section is. `ignored` is what was on the
+sheet and is not in the part, and it is the first place to look when the shape
+is wrong: a drawing whose outline arrived as splines says so there and nowhere
+else. Both are shown in the viewer's properties panel, above any number.
+
 DXF rather than an image: in DXF the annotation is a separate entity type, so
 telling the part from the sheet is a filter rather than a computer vision
 problem. Nothing here reads pixels.

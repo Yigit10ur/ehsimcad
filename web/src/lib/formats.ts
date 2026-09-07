@@ -21,6 +21,11 @@ export const SUPPORTED_EXTENSIONS = [
   '.ply',
   '.glb',
   '.gltf',
+  // A drawing rather than a model, and read as one: a turned part is
+  // reconstructed from its profile and centre line, and labelled `derived` so
+  // that nothing it produces is taken for a part somebody modelled. See
+  // ARCHITECTURE.md section 12.
+  '.dxf',
 ] as const;
 
 type NativeKind = 'part' | 'assembly' | 'drawing';
@@ -66,8 +71,14 @@ const NATIVE_FORMATS: Record<string, NativeFormat> = {
   '.drw': { kind: 'drawing', application: 'a CAD' },
 };
 
-/** Drawing exchange formats, which describe sheets rather than solids. */
-const DRAWING_EXCHANGE = ['.dwg', '.dxf'];
+/**
+ * The drawing format that cannot be read, next to the one that can.
+ *
+ * DWG is AutoCAD's own and needs a licensed library; DXF is the interchange
+ * format it exports, and every application that writes one writes the other.
+ * So the answer is not "upload the model instead" -- it is one menu item away.
+ */
+const DRAWING_EXCHANGE = ['.dwg'];
 
 export function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf('.');
@@ -91,7 +102,7 @@ function nativeMessage(extension: string, format: NativeFormat): string {
     // a drawing has no solid to export. What they want is the model it
     // documents.
     const owner = format.application === UNNAMED ? 'a' : withArticle(format.application);
-    return `${extension} is ${owner} drawing, not a 3D model. Upload the part or assembly it documents, exported to STEP.`;
+    return `${extension} is ${owner} drawing, not a 3D model. Upload the part or assembly it documents, exported to STEP — or, for a turned part, save the drawing as DXF.`;
   }
 
   return `${extension} is ${source} ${format.kind} file, which needs a commercial SDK to read. Export it to STEP and upload that.`;
@@ -108,7 +119,7 @@ export function rejectionReason(filename: string): string | null {
   if (native) return nativeMessage(extension, native);
 
   if (DRAWING_EXCHANGE.includes(extension)) {
-    return `${extension} is a 2D drawing format. This platform inspects 3D models — upload the model itself, exported to STEP.`;
+    return `${extension} needs a licensed library to read. Save the same drawing as DXF, which every application that writes ${extension} can also write.`;
   }
 
   return `${extension || 'that file type'} is not supported. Upload one of: ${SUPPORTED_EXTENSIONS.join(', ')}.`;

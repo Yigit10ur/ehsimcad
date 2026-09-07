@@ -96,8 +96,14 @@ class DerivedGeometry(BaseModel):
     method: Literal["dxf-revolve"]
     axis_point: Vec3
     axis_direction: Vec3
-    # Plain sentences, meant to be shown to whoever opens the model.
+    # What the reading decided. Plain sentences, meant to be shown to whoever
+    # opens the model.
     assumptions: list[str] = Field(default_factory=list)
+    # What was on the sheet and is not in the part. Kept apart from the
+    # assumptions because it answers a different question, and because it is
+    # the first place to look when the result is the wrong shape: a drawing
+    # whose outline came through as splines says so here.
+    ignored: list[str] = Field(default_factory=list)
 
 
 class ModelMetadata(BaseModel):

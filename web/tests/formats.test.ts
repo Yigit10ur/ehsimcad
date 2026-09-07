@@ -60,9 +60,22 @@ describe('rejectionReason', () => {
       expect(reason).toContain('the part or assembly it documents');
     });
 
-    it.each(['plan.dwg', 'plan.dxf'])('turns away the 2D exchange format %s', (filename) => {
-      const reason = rejectionReason(filename) ?? '';
-      expect(reason).toContain('2D drawing format');
+    it.each(['plan.dxf', 'plan.DXF'])('accepts the drawing %s', (filename) => {
+      expect(rejectionReason(filename)).toBeNull();
+    });
+
+    it('sends the holder of a DWG to DXF rather than to a modelling application', () => {
+      const reason = rejectionReason('plan.dwg') ?? '';
+
+      // Every application that writes DWG writes DXF, so the way out is one
+      // menu item away rather than "go and find the model".
+      expect(reason).toContain('DXF');
+      expect(reason).not.toContain('STEP');
+    });
+
+    it('offers DXF to the holder of a native drawing as well', () => {
+      const reason = rejectionReason('sheet.slddrw') ?? '';
+      expect(reason).toContain('DXF');
     });
   });
 

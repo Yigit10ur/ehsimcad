@@ -386,6 +386,13 @@ tessellation, aynı face_groups, aynı exact kenarlar ve snap hedefleri. Yani he
 bunun doğru parça olup olmadığıdır; etiket ve kaydedilen varsayımlar bunun
 içindir.
 
+Kayıt iki listedir ve ayrı tutulur, çünkü farklı sorulara cevap verirler.
+`assumptions`, okumanın verdiği kararlardır: hangi çizgi eksen sayıldı, hangi
+taraf döndürüldü, kesit ne kadar. `ignored`, sayfada olup parçaya girmeyendir ve
+şekil yanlış çıktığında ilk bakılacak yerdir: konturu spline olarak gelen bir
+resim bunu orada söyler, başka hiçbir yerde söylemez. İkisi de viewer'ın
+özellikler panelinde, her sayının üstünde gösterilir.
+
 Görüntü değil DXF: DXF'te açıklamalar ayrı bir varlık tipidir, dolayısıyla
 parçayı sayfadan ayırmak bir görüntü işleme problemi değil, bir filtredir.
 Burada hiçbir şey piksel okumaz.

@@ -157,6 +157,10 @@ class Profile:
     # metadata: someone looking at the model has to be able to see what was
     # assumed to make it.
     assumptions: list[str]
+    # What was on the sheet and did not become part of the solid. A different
+    # question from what was assumed, and the first place to look when the
+    # result is the wrong shape.
+    ignored: list[str]
 
 
 def available() -> bool:
@@ -312,8 +316,11 @@ def read_curves(source: Path) -> tuple[list[Curve], list[Curve], str, list[str]]
 
         (axis_candidates if _is_axis_line(entity, doc) else outline).extend(curves)
 
-    notes = [f"{count} {kind} ignored" for kind, count in sorted(skipped.items())]
-    return outline, axis_candidates, units, notes
+    ignored = [
+        f"{count} {kind}" if count == 1 else f"{count} {kind} entities"
+        for kind, count in sorted(skipped.items())
+    ]
+    return outline, axis_candidates, units, ignored
 
 
 def _normalise(v: Point) -> Point:
@@ -469,7 +476,8 @@ def _polygon(curves: list[Curve]) -> list[Point]:
     return [p for c in curves for p in _samples(c)]
 
 
-def _area(curves: list[Curve]) -> float:
+def section_area(curves: list[Curve]) -> float:
+    """The area the outline encloses: the section that gets revolved."""
     points = _polygon(curves)
     return (
         abs(
@@ -513,12 +521,12 @@ def _loops_on(
         ):
             loops.append([*chain, Curve(last, first)])
 
-    return [loop for loop in loops if _area(loop) > tol * tol]
+    return [loop for loop in loops if section_area(loop) > tol * tol]
 
 
 def profile_of(
     outline: list[Curve], axis: Axis, tol: float
-) -> tuple[list[Curve], list[str]]:
+) -> tuple[list[Curve], list[str], list[str]]:
     """The outline to revolve, chosen from both sides of the axis.
 
     Both sides, rather than picking one by which carries more geometry: a title
@@ -531,7 +539,7 @@ def profile_of(
     for keep in (1, -1):
         for loop in _loops_on(outline, axis, keep, tol):
             distance = min(abs(axis.signed_distance(p)) for p in _polygon(loop))
-            candidates.append((distance, -_area(loop), keep, loop))
+            candidates.append((distance, -section_area(loop), keep, loop))
 
     if not candidates:
         raise DrawingError(
@@ -542,25 +550,31 @@ def profile_of(
 
     distance, negative_area, keep, loop = min(candidates, key=lambda c: (c[0], c[1]))
     side = "above" if keep > 0 else "below"
-    notes = [
+    assumptions = [
         f"revolved the outline {side} the centre line",
         f"{len(loop)} edges enclosing {-negative_area:.1f} mm2 of section",
     ]
     if distance > tol:
-        notes.append(f"bored: the section stops {distance:.3f} mm short of the axis")
+        assumptions.append(
+            f"bored: the section stops {distance:.3f} mm short of the axis"
+        )
 
     # A symmetric drawing offers the same outline twice, once per side. Its own
     # reflection is not another outline, and counting it as one would report a
-    # part of the drawing being ignored that is not there.
-    shapes = {(round(c[0], 6), round(c[1], 6)) for c in candidates}
-    if len(shapes) > 1:
-        notes.append(f"{len(shapes) - 1} other closed outline(s) on the sheet ignored")
-    return loop, notes
+    # part of the drawing left out that is not there.
+    others = len({(round(c[0], 6), round(c[1], 6)) for c in candidates}) - 1
+    ignored = []
+    if others == 1:
+        ignored.append("1 other closed outline on the sheet")
+    elif others > 1:
+        ignored.append(f"{others} other closed outlines on the sheet")
+
+    return loop, assumptions, ignored
 
 
 def read_profile(source: Path) -> Profile:
     """A DXF drawing of a turned part, read down to the outline to revolve."""
-    outline, candidates, units, notes = read_curves(source)
+    outline, candidates, units, ignored = read_curves(source)
     if not outline:
         raise DrawingError(
             "the drawing has no lines or arcs outside its dimensions and notes."
@@ -568,7 +582,7 @@ def read_profile(source: Path) -> Profile:
 
     tol = tolerance_for(outline + candidates)
     axis = find_axis(candidates)
-    loop, profile_notes = profile_of(outline, axis, tol)
+    loop, assumptions, left_out = profile_of(outline, axis, tol)
 
     return Profile(
         axis=axis,
@@ -577,9 +591,9 @@ def read_profile(source: Path) -> Profile:
         assumptions=[
             "read as a solid of revolution: the part is taken to be turned",
             f"axis from the {axis.found_by}",
-            *profile_notes,
-            *notes,
+            *assumptions,
         ],
+        ignored=[*left_out, *ignored],
     )
 
 
@@ -674,5 +688,6 @@ def convert(source: Path, out_glb: Path, deflection: float | None = None):
                 0.0,
             ),
             assumptions=profile.assumptions,
+            ignored=profile.ignored,
         ),
     )

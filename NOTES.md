@@ -29,9 +29,10 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-335 tests pass: 292 in `web` (vitest, against an in-process Postgres), 43 in
+377 tests pass: 299 in `web` (vitest, against an in-process Postgres), 78 in
 `converter` (pytest; the geometry ones skip where OCCT is not installed, which
-is CI).
+is CI -- the drawing reader does not, because deciding what a drawing means is
+where being wrong is invisible).
 
 ---
 
@@ -211,6 +212,44 @@ self-contained server Next.js traced, and a trace only follows what the
 postgres driver, and neither is reachable from a page. They run from a `tools`
 stage that keeps the build environment. Both were broken until the images were
 actually built, and both are commands the install instructions open with.
+
+**A drawing is read, and never mistaken for a model.** A DXF drawing of a
+turned part is reconstructed: find the centre line, take the closed outline
+lying against it, revolve it. What comes out is an ordinary B-rep -- the same
+face groups, exact edges and snap targets a STEP file gets -- so every
+measurement and section tool works on it unchanged. What it is not is a part
+somebody modelled, so `geometry_source` is `derived` and the viewer says so in
+the panel and in the toolbar, above any number.
+
+Only that one shape of guess is made. Relating two views to each other -- a
+pocket, a step milled from the side, a cross hole -- is a different problem and
+is refused rather than attempted.
+
+**The axis is never inferred, and that is the decision to keep.** It fixes
+every diameter in the part, so an axis guessed wrongly does not produce an
+obviously broken model: it produces a convincing one with every radius wrong,
+which somebody then measures. A symmetry fallback was written and taken out
+again. With no centre line the drawing is refused, naming what is missing.
+
+**DXF rather than an image**, which is what makes the whole thing tractable: in
+DXF the dimensions, notes, hatching and title block are separate entity types,
+so telling the part from the sheet is a filter rather than a computer vision
+problem. Nothing reads pixels.
+
+**What was assumed and what was left out are two lists, not one.** A tally of
+skipped dimensions is not an assumption. `ignored` is also the first place to
+look when the shape is wrong -- a drawing whose outline arrived as splines says
+so there and nowhere else. This was only obvious once the panel was looked at.
+
+**Auth.js has to be told to believe the host it was reached on.** It works this
+out from the environment: it trusts the host in development, and on Vercel, and
+nowhere else. So a production build in a container refused every request to
+`/api/auth/*`, and the browser was told only "There is a problem with the
+server configuration". Invisible in dev, in CI and on Vercel; fatal everywhere
+else. `trustHost` alone is not enough either -- the standalone server builds
+request URLs from the address it is bound to, so callbacks came out as
+`0.0.0.0`. `AUTH_URL` is derived from `SITE_URL`, which is fixed by whoever
+installed this rather than by whoever sent the request.
 
 **The images travel; the build does not.** A closed network cannot build this,
 and no configuration changes that: the build reaches Docker Hub for two base
@@ -432,13 +471,14 @@ with GitHub breaks the moment the domain moves without it.
 |---|---|
 | `app/cad/occt.py` | The B-rep pipeline: reads STEP/IGES, walks the XCAF tree, tessellates, extracts face groups, edges and snap geometry. Uses `AddOptimal_s` with a zero gap for bounding boxes -- the default inflates them. |
 | `app/cad/mesh.py` | The mesh path. Measured properties, null volume when not watertight, sharp edges by dihedral angle, no snap data. |
-| `app/models.py` | The contract between converter and viewer: tree, per-part properties, face groups, snap geometry, `geometry_source`, `declared_name`. |
+| `app/cad/drawing.py` | Reading a turned part out of a DXF: filter the annotation, find the centre line, assemble the closed outline beside it, revolve. All 2D and pure Python except the revolve, so the part that can be wrong unnoticed is tested in CI. |
+| `app/models.py` | The contract between converter and viewer: tree, per-part properties, face groups, snap geometry, `geometry_source`, `declared_name`, and for a derived model what was assumed and what was left out. |
 | `app/pipeline.py` | Format dispatch and the deflection rule, which scales with the bounding box. |
 | `app/worker.py` | The polling queue, plus `--drain` for a runner started per upload. Also decides whether the CAD file's own name should replace the uploaded file name. |
 | `app/storage.py` | S3-compatible download and upload. |
 | `app/config.py` | Settings, deliberately sharing the web application's variable names. |
 | `app/cli.py`, `app/main.py` | A one-shot convert command, and a health endpoint. |
-| `scripts/make_fixture.py` | Generates the IGES test fixture. |
+| `scripts/make_fixture.py` | Generates every test fixture, including two DXF drawings written the way an office draws them -- mirrored about the centre line, bore dashed, dimensions and a title block on top. |
 | `scripts/make_large_assembly.py` | Generates an assembly of N parts, repeated or distinct, for scale measurement. |
 | `tests/` | Geometry against analytically known values; the naming rule; the mesh path's honesty about what it cannot measure. |
 
@@ -461,7 +501,7 @@ with GitHub breaks the moment the domain moves without it.
 | `components/viewer/MeasureLayer.tsx` | Measurement lines, markers and labels. Labels are constant on screen; a dimension is an annotation, not part of the model. |
 | `components/viewer/SectionControls.tsx` | The reference row (X, Y, Z, and `face` to borrow one from the model), two rotation dials, flip, centre, and the position slider with a millimetre readout. Offers `face` only where there is a flat face to borrow from. |
 | `components/viewer/ClippedSolid.tsx` | The stencil-buffer cap that makes a cut read as solid material. |
-| `components/viewer/PropertiesPanel.tsx` | Exact mass properties for the selected part; the explode control. |
+| `components/viewer/PropertiesPanel.tsx` | Exact mass properties for the selected part; the explode control; and, for a model read out of a drawing, what that reading assumed and what it left out -- above any number rather than beside one. |
 | `components/viewer/FaceHighlight.tsx` | One B-rep face drawn on top of the part it belongs to, sharing the part's buffers and changing only the range drawn. |
 | `components/viewer/SectionHandles.tsx` | The triad on the cut. Follows the drag on the canvas rather than through R3F's pointer events, which only reach the object under the cursor -- and the cursor leaves a thin arrow immediately. |
 | `components/viewer/MeasurePanel.tsx` | The measurement menu: what to measure, clearing, and the unit. |
@@ -487,11 +527,11 @@ with GitHub breaks the moment the domain moves without it.
 | `lib/mail.ts` | The provider, reached over plain HTTP. Logs instead of sending when unconfigured. |
 | `lib/storage.ts` | Presigned URLs, the storage key layout, and deletion -- one request per key, because every S3 implementation answers the single-object form and the batch one reports partial failure in the body rather than the status. |
 | `lib/upload.ts` | The three-step upload, in one place so a new model and a new revision cannot drift apart. |
-| `lib/formats.ts` | What is accepted, and the rejection message that fits the file. |
+| `lib/formats.ts` | What is accepted, and the rejection message that fits the file. DXF is accepted; DWG is sent to DXF rather than to a modelling application, because it is one menu item away. |
 | `lib/converter.ts` | Asks GitHub to start a conversion run. Built from `GITHUB_REPOSITORY`, and silent when it fails: an upload that cannot summon a worker is still a good upload. |
 | `lib/models.ts` | Who may delete a model, and deleting one. The rule is a pure function so the route and the catalogue cannot disagree about whether to draw the button. |
 | `lib/env.ts` | Validated environment, including the upload size limit. |
-| `auth.ts` | GitHub and password providers; marks OAuth addresses verified and claims invitations at sign-in. |
+| `auth.ts` | GitHub and password providers; marks OAuth addresses verified and claims invitations at sign-in. Trusts the host and pins `AUTH_URL` to `SITE_URL`, without which no self-hosted build can sign anybody in. |
 | `components/catalogue/ModelList.tsx` | The catalogue rows: aligned technical columns, status as a dot and a word, and the two-step delete whose confirmation names how many revisions go with the model. Polls only while something is converting. |
 | `components/catalogue/UploadForm.tsx` | The upload button and the destination picker, shown only when there is a choice. |
 | `components/catalogue/RevisionUpload.tsx` | The same upload path, aimed at an existing model. |

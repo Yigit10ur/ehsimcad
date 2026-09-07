@@ -108,6 +108,16 @@ export function Toolbar({ source }: { source: GeometrySource }) {
           Mesh source — no snapping, measurements are approximate
         </span>
       )}
+
+      {/* This one is not about measuring, so it does not wait for the measure
+          tool. Nothing here is approximate: the reading of the drawing either
+          was the part or was not, and that is worth knowing before the model
+          is looked at rather than before it is measured. */}
+      {source === 'derived' && (
+        <span className="rounded bg-amber-100 px-2 py-1 text-[11px] text-amber-800">
+          Reconstructed from a drawing — see Properties
+        </span>
+      )}
     </div>
   );
 }

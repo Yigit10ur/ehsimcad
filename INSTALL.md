@@ -262,6 +262,19 @@ curl -fsS http://localhost:3000/api/health
 unreachable, which is the condition worth taking an instance out of rotation
 for. It needs no authentication.
 
+Then, through the address people will actually use:
+
+```
+curl -fsS https://cad.internal.example/api/auth/providers
+```
+
+A JSON object naming the sign-in methods. This is worth its own line because
+of what it fails on: sign-in is the one thing that depends on the application
+agreeing about which host it is being reached on, and when it does not, the
+browser is told only "There is a problem with the server configuration".
+Through `localhost` this can pass while the real address fails, so run it
+against the address in `SITE_URL`, through your proxy.
+
 Then, in a browser, end to end:
 
 1. Open `SITE_URL`, create an account, sign in.
@@ -286,6 +299,7 @@ docker compose logs worker        # or: journalctl -u ehsimcad-worker -f
 | Model stays `queued` for ever | No worker running, or it cannot reach the database. The queue is a table — nothing is lost, it converts as soon as a worker starts. |
 | Worker will not start | It refuses to run when OpenCascade is not importable, rather than accepting jobs and failing all of them. The log says so on the first line. |
 | Model goes `failed` | The file itself. `error_message` on the version row, and the worker log, say why. Other uploads are unaffected. |
+| "There is a problem with the server configuration" on signing in | The application did not recognise the host it was reached on. Check `SITE_URL`, and that the proxy passes `Host` (and `X-Forwarded-Host`) through rather than rewriting it. The web log names the host it saw. |
 | Sign-in loops back to the sign-in page | `AUTH_SECRET` is unset or differs between instances behind a load balancer. |
 | "Continue with GitHub" errors | The OAuth application's callback must be exactly `SITE_URL` + `/api/auth/callback/github`. Leave `AUTH_GITHUB_*` empty to switch it off entirely. |
 | Password reset email never arrives | Expected with no `MAIL_API_KEY`: the message is written to the web log instead. |
@@ -538,6 +552,19 @@ curl -fsS http://localhost:3000/api/health
 `{"status":"ok","database":true}` beklenir. Veritabanına ulaşılamıyorsa 503
 döner. Kimlik doğrulama istemez.
 
+Sonra, insanların gerçekten kullanacağı adres üzerinden:
+
+```
+curl -fsS https://cad.internal.example/api/auth/providers
+```
+
+Giriş yöntemlerini sayan bir JSON dönmeli. Ayrı bir satırı hak etmesinin sebebi
+neyde patladığı: giriş, uygulamanın hangi adres üzerinden erişildiği konusunda
+hemfikir olmasına bağlı olan tek şey ve hemfikir olmadığında tarayıcıya
+yalnızca "There is a problem with the server configuration" yazıyor. `localhost`
+üzerinden geçip gerçek adreste patlayabilir, o yüzden `SITE_URL`'deki adrese,
+vekilin üzerinden çalıştırın.
+
 Sonra tarayıcıdan: hesap açın, giriş yapın, bir STEP dosyası yükleyin. `queued`
 → `converting` → `ready` sırasını izlemeli, tipik bir montaj için bir dakikadan
 kısa sürede. Sonra modeli açın; parça ağacı, özellikler paneli ve kesit
@@ -557,6 +584,7 @@ tablosunda. En sık çıkanlar:
 | Tarayıcıda yükleme başarısız, sunucu sağlıklı | Tarayıcı depolama adresine ulaşamıyor ya da kova CORS'a izin vermiyor. Tarayıcının ağ sekmesine bakın: başarısız `OPTIONS` CORS'tur, başarısız bağlantı adrestir. |
 | Model sonsuza kadar `queued` | Worker çalışmıyor ya da veritabanını göremiyor. Veri kaybı yok. |
 | Worker başlamıyor | OpenCascade yüklenemiyorsa bilerek başlamayı reddeder. Günlüğün ilk satırı sebebi yazar. |
+| Girişte "There is a problem with the server configuration" | Uygulama, üzerinden erişildiği adresi tanımadı. `SITE_URL`'e bakın ve vekilin `Host` (ve `X-Forwarded-Host`) başlığını değiştirmeden geçirdiğinden emin olun. Web günlüğü gördüğü adresi yazar. |
 | Girişten sonra tekrar giriş sayfası | `AUTH_SECRET` boş, ya da yük dengeleyici arkasındaki örnekler arasında farklı. |
 | Yeniden başlatınca herkes çıkmış | `AUTH_SECRET` her seferinde yeniden üretiliyor; sabit olmalı. |
 | Şifre sıfırlama e-postası gelmiyor | `MAIL_API_KEY` boşken beklenen davranış: mesaj gönderilmez, web günlüğüne yazılır. |

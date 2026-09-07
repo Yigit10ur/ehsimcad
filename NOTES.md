@@ -208,6 +208,23 @@ drawing near-white on white for anyone whose system was set to dark.
 **There is no public-visibility toggle.** The column exists, but "public" here
 means every GitHub account on the internet, not everyone in the company.
 
+**The toolkit is pinned at both ends, and the image proves itself.**
+`cadquery-ocp` was pinned by a floor alone. Version 8 appeared, the next image
+build took it, and the binding changed underneath the code: static methods lost
+the `_s` suffix they are called by in twenty-five places, and `Bnd_Box.Get`
+stopped returning anything Python can read. The image built cleanly, started
+cleanly, claimed jobs and failed every one of them -- STEP included.
+
+Nothing caught it, and the reasons are worth keeping: CI has no OCCT, the
+development environment still had 7.9 installed from weeks earlier, and
+preflight checks the database and the bucket but never touches geometry. It
+took a real file through a real worker.
+
+So `app/selfcheck.py` builds a box and a cylinder and converts them, and the
+image build runs it. An environment OpenCascade cannot be called in now fails
+the build rather than the first upload. Verified by removing the ceiling and
+watching the build stop at that step.
+
 **The one-shot commands run from their own image.** `drizzle-kit migrate` and
 `preflight` cannot run from the image that serves the site: it carries the
 self-contained server Next.js traced, and a trace only follows what the
@@ -504,6 +521,7 @@ with GitHub breaks the moment the domain moves without it.
 | `app/cad/pdf.py` | The same, out of a printed sheet: stroked paths rather than entity types, dashed strokes rejoined into centre lines, cubics fitted back to the arcs they were. Hands over to `drawing.py` the moment it has curves. |
 | `app/cad/drawing.py` | Reading a turned part out of a DXF: filter the annotation, find the centre line, assemble the closed outline beside it, revolve. All 2D and pure Python except the revolve, so the part that can be wrong unnoticed is tested in CI. |
 | `app/models.py` | The contract between converter and viewer: tree, per-part properties, face groups, snap geometry, `geometry_source`, `declared_name`, and for a derived model what was assumed and what was left out. |
+| `app/selfcheck.py` | Builds a shape and converts it, to answer whether OpenCascade works here at all. Run by the image build, so a toolkit the code cannot call stops the build instead of failing every upload. |
 | `app/pipeline.py` | Format dispatch and the deflection rule, which scales with the bounding box. |
 | `app/worker.py` | The polling queue, plus `--drain` for a runner started per upload. Also decides whether the CAD file's own name should replace the uploaded file name. |
 | `app/storage.py` | S3-compatible download and upload. |

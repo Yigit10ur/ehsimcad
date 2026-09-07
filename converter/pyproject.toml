@@ -21,6 +21,11 @@ dependencies = [
     # toolchain: STL and OBJ need no OCCT. Keeping trimesh in the base install
     # is what lets CI run those tests.
     "trimesh>=4.5",
+    # Reading DXF drawings. In the base install for the same reason as trimesh:
+    # everything that decides what a drawing means -- which line is the axis,
+    # which outline is the part -- is plain geometry and is tested in CI. Only
+    # the revolve at the end needs OCCT.
+    "ezdxf>=1.3",
 ]
 
 [project.optional-dependencies]

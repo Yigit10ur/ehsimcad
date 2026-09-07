@@ -24,8 +24,10 @@ import numpy as np
 
 from app.models import (
     ConversionResult,
+    DerivedGeometry,
     EdgeGeometry,
     FaceGeometry,
+    GeometrySource,
     ModelMetadata,
     PartMetadata,
     SnapGeometry,
@@ -445,14 +447,31 @@ def convert(
     source: Path, out_glb: Path, deflection: float | None = None
 ) -> ConversionResult:
     """Read a B-rep file, tessellate it and write a .glb plus its metadata."""
+    roots = read_parts(source)
+    if not roots:
+        raise ValueError(f"no shapes found in {source.name}")
+    return build(roots, out_glb, deflection)
+
+
+def build(
+    roots: list[Part],
+    out_glb: Path,
+    deflection: float | None = None,
+    geometry_source: GeometrySource = "brep",
+    derived: DerivedGeometry | None = None,
+) -> ConversionResult:
+    """Tessellate shapes and write the .glb and metadata the viewer reads.
+
+    Separate from `convert` because where the shapes came from is the reader's
+    business and nothing below here has an opinion about it. A solid recovered
+    from a drawing gets the same face groups, the same exact edges and the same
+    snap targets as one read from STEP -- it differs only in `geometry_source`,
+    which is the label saying so.
+    """
     import trimesh
     from trimesh.path.entities import Line
     from trimesh.visual import TextureVisuals
     from trimesh.visual.material import PBRMaterial
-
-    roots = read_parts(source)
-    if not roots:
-        raise ValueError(f"no shapes found in {source.name}")
 
     leaves: list[Part] = []
 
@@ -529,6 +548,8 @@ def convert(
         )
 
     metadata = ModelMetadata(
+        geometry_source=geometry_source,
+        derived=derived,
         # The name the CAD file gives the model as a whole, which exists only
         # when a single root carries a name of its own. Several roots have no
         # one name between them, and an unnamed root has none to give.

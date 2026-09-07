@@ -9,7 +9,11 @@ from app.models import ConversionResult
 
 BREP_FORMATS = {".step", ".stp", ".iges", ".igs"}
 MESH_FORMATS = {".stl", ".obj", ".ply"}
-SUPPORTED_FORMATS = BREP_FORMATS | MESH_FORMATS | {".glb", ".gltf"}
+# A drawing is not a model, and what comes out of one is a reading of it. It is
+# converted all the same, and labelled `derived` so that nothing downstream can
+# mistake it for a part somebody actually modelled.
+DRAWING_FORMATS = {".dxf"}
+SUPPORTED_FORMATS = BREP_FORMATS | MESH_FORMATS | DRAWING_FORMATS | {".glb", ".gltf"}
 
 
 class UnsupportedFormatError(ValueError):
@@ -37,7 +41,7 @@ def convert(source: Path, out_glb: Path) -> ConversionResult:
     if suffix not in SUPPORTED_FORMATS:
         raise UnsupportedFormatError(f"unsupported format: {suffix}")
 
-    if suffix in BREP_FORMATS:
+    if suffix in BREP_FORMATS or suffix in DRAWING_FORMATS:
         from app.cad import occt
 
         if not occt.available():
@@ -45,6 +49,10 @@ def convert(source: Path, out_glb: Path) -> ConversionResult:
                 "OCCT bindings are not installed; "
                 'run: pip install -e ".[cad]" or use the Docker image'
             )
+        if suffix in DRAWING_FORMATS:
+            from app.cad import drawing
+
+            return drawing.convert(source, out_glb)
         # Deflection is left to the reader: it needs the bounding box, which
         # is not known until the file has been read.
         return occt.convert(source, out_glb)

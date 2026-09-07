@@ -322,11 +322,16 @@ which is how a crashed worker's job comes back.
 
 - **Native CAD formats** — parts and assemblies (`.ipt`/`.iam`,
   `.sldprt`/`.sldasm`, `.catpart`/`.catproduct`, `.prt`/`.asm`) and drawings
-  (`.idw`, `.slddrw`, `.catdrawing`, `.dwg`, `.dxf`). Each is turned away at
-  upload with what to do instead; a drawing is told to upload the model it
+  (`.idw`, `.slddrw`, `.catdrawing`, `.dwg`). Each is turned away at
+  upload with what to do instead; a native drawing is told to upload the model it
   documents rather than to export itself, which it cannot do. No open source solution
   exists; a commercial SDK such as CAD Exchanger, HOOPS or Datakit is required.
-  Formats read directly: **STEP, IGES, STL, OBJ, PLY, glTF/GLB**.
+  Formats read directly: **STEP, IGES, STL, OBJ, PLY, glTF/GLB**, and **DXF**
+  under the terms below.
+- **Reconstructing a part from several views.** A DXF drawing of a *turned*
+  part is read (section 12): one profile, one axis, one revolve. Anything that
+  needs two views related to each other — a pocket, a step milled from the
+  side, a hole drilled across — is not, and is refused rather than guessed at.
 - Real-time multi-user sessions (co-navigation).
 - Reading PMI / GD&T annotations.
 - Server-side high quality (raytraced) rendering output.
@@ -358,3 +363,37 @@ which is how a crashed worker's job comes back.
 Leaving measurement and clipping to week 3 is deliberate: most of the demo value
 sits there, but writing them before the viewer core has settled means writing
 them twice.
+
+---
+
+## 12. Reading a drawing (`derived` geometry)
+
+A drawing is not a model. Turning one back into a solid means deciding what the
+projection meant, so everything produced this way is labelled
+`geometry_source: "derived"` and carries the decisions that made it.
+
+Only one shape of guess is made, because only one is narrow enough to be
+worth making: a turned part is a profile revolved about an axis, and the
+drawing shows both.
+
+| Step | What is done | What is refused |
+|---|---|---|
+| Annotation | Dimensions, notes, hatching, leaders and blocks are dropped by DXF entity type, along with anything on a switched-off, frozen or non-plotting layer | — |
+| Axis | The longest line whose linetype resolves to CENTER, or whose layer is named CENTER / CENTRE / AXIS / EKSEN | A drawing with no centre line. Nothing infers one |
+| Profile | Closed outlines are assembled on both sides of the axis, cut where they cross it; the one lying against the axis wins | An outline that does not close, or three ends meeting at one point |
+| Solid | `BRepPrimAPI_MakeRevol`, a full turn | An arc drawn across the centre line; a revolve that does not validate |
+
+Why the axis is never inferred: it fixes every diameter in the part. An axis
+guessed wrongly does not produce an obviously broken model, it produces a
+convincing one with every radius wrong -- and somebody then measures it. A
+refusal naming what is missing is worth more than a plausible solid.
+
+What comes out is an ordinary B-rep and is treated as one: the same
+tessellation, face groups, exact edges and snap targets as a STEP file, so
+every measurement and section tool works on it unchanged. What is uncertain is
+not the numbers but whether it is the right part, which is what the label and
+the recorded assumptions are for.
+
+DXF rather than an image: in DXF the annotation is a separate entity type, so
+telling the part from the sheet is a filter rather than a computer vision
+problem. Nothing here reads pixels.

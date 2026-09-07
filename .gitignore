@@ -40,6 +40,10 @@ __pycache__/
 *.igs
 *.glb
 *.gltf
+# DXF is text rather than binary, but a real drawing is just as large and just
+# as much somebody's intellectual property.
+*.dxf
+*.dwg
 *.stl
 # Scratch output directories, wherever they appear.
 converter/samples/

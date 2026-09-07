@@ -79,6 +79,27 @@ class SnapGeometry(BaseModel):
     faces: list[FaceGeometry] = Field(default_factory=list)
 
 
+GeometrySource = Literal["brep", "mesh", "derived"]
+
+
+class DerivedGeometry(BaseModel):
+    """How a model was worked out from a drawing, rather than read from a solid.
+
+    Present only when `geometry_source` is `derived`. Everything in here is a
+    decision the reader made on the viewer's behalf, written down so that
+    somebody looking at the model can see what it rests on -- which line was
+    taken for the axis, which outline was revolved, what was ignored. A derived
+    model measures as exactly as any other; what is uncertain is whether it is
+    the right model, and that is not something a number can carry.
+    """
+
+    method: Literal["dxf-revolve"]
+    axis_point: Vec3
+    axis_direction: Vec3
+    # Plain sentences, meant to be shown to whoever opens the model.
+    assumptions: list[str] = Field(default_factory=list)
+
+
 class ModelMetadata(BaseModel):
     """What the viewer knows about a model.
 
@@ -87,9 +108,16 @@ class ModelMetadata(BaseModel):
     model carries measured properties and no snap data at all, because a
     triangle corner is not a design intent and pretending otherwise would put a
     wrong number in front of someone reading a dimension.
+
+    `derived` is a B-rep too, and measures like one -- but it was reconstructed
+    from a drawing, so its numbers are only as right as the reading of that
+    drawing. `derived` below says what that reading assumed.
     """
 
-    geometry_source: Literal["brep", "mesh"] = "brep"
+    geometry_source: GeometrySource = "brep"
+    # Set only for a `derived` source: what was assumed to get here. Absent on
+    # anything read from a real solid, where nothing was assumed.
+    derived: DerivedGeometry | None = None
     # What the CAD file calls this model, or None when it does not say. A mesh
     # file never says: an STL has no product structure, so its "name" would only
     # ever be the file name coming back around.

@@ -314,12 +314,17 @@ işi böyle geri gelir.
 
 - **Native CAD formatları** — parçalar ve montajlar (`.ipt`/`.iam`,
   `.sldprt`/`.sldasm`, `.catpart`/`.catproduct`, `.prt`/`.asm`) ve teknik
-  resimler (`.idw`, `.slddrw`, `.catdrawing`, `.dwg`, `.dxf`). Her biri
-  yüklemede, ne yapılması gerektiğini söyleyen bir mesajla reddedilir; teknik
-  resme "kendini dışa aktar" denmez, belgelediği modeli yüklemesi söylenir —
+  resimler (`.idw`, `.slddrw`, `.catdrawing`, `.dwg`). Her biri
+  yüklemede, ne yapılması gerektiğini söyleyen bir mesajla reddedilir; native
+  bir resme "kendini dışa aktar" denmez, belgelediği modeli yüklemesi söylenir —
   çünkü bir resmin dışa aktarılacak katısı yoktur. Açık kaynak
   çözümü yoktur; CAD Exchanger / HOOPS / Datakit gibi ticari SDK gerekir.
-  Doğrudan okunan formatlar: **STEP, IGES, STL, OBJ, PLY, glTF/GLB**.
+  Doğrudan okunan formatlar: **STEP, IGES, STL, OBJ, PLY, glTF/GLB** ve
+  aşağıdaki koşullarla **DXF**.
+- **Birden fazla görünüşten parça geri çatma.** *Tornalanmış* bir parçanın DXF
+  resmi okunur (bölüm 12): tek profil, tek eksen, tek döndürme. İki görünüşün
+  birbiriyle ilişkilendirilmesini gerektiren her şey — cep, yandan frezelenmiş
+  basamak, çapraz delik — okunmaz; tahmin edilmez, reddedilir.
 - Gerçek zamanlı çok kullanıcılı oturum (birlikte gezinme).
 - PMI / GD&T anotasyonlarının okunması.
 - Sunucu tarafı yüksek kaliteli render (raytrace) çıktısı.
@@ -350,3 +355,37 @@ işi böyle geri gelir.
 
 Ölçüm ve kesit araçlarının 3. haftaya bırakılması bilinçlidir: demo değerinin
 çoğu oradadır, ancak viewer çekirdeği oturmadan yazılırsa iki kez yazılır.
+
+---
+
+## 12. Resimden okuma (`derived` geometri)
+
+Teknik resim model değildir. Onu katıya çevirmek, izdüşümün ne anlama geldiğine
+karar vermek demektir; bu yüzden bu yolla üretilen her şey
+`geometry_source: "derived"` etiketiyle ve onu üreten kararlarla birlikte gelir.
+
+Yalnızca tek tip tahmin yapılır, çünkü yapmaya değecek kadar dar olan tek tahmin
+budur: tornalanmış parça, bir eksen etrafında döndürülmüş bir profildir ve resim
+ikisini de gösterir.
+
+| Adım | Yapılan | Reddedilen |
+|---|---|---|
+| Açıklamalar | Ölçüler, notlar, tarama, kılavuz çizgiler ve bloklar DXF varlık tipine göre atılır; kapalı, dondurulmuş ya da basılmayan katmanlardaki her şey de | — |
+| Eksen | Çizgi tipi CENTER'a çözülen ya da katmanı CENTER / CENTRE / AXIS / EKSEN olan en uzun çizgi | Eksen çizgisi olmayan resim. Hiçbir şey eksen uydurmaz |
+| Profil | Eksenin iki yanında da kapalı konturlar kurulur, ekseni kesenler orada kesilir; eksene yaslanan kontur seçilir | Kapanmayan kontur; tek noktada buluşan üç uç |
+| Katı | `BRepPrimAPI_MakeRevol`, tam tur | Eksen çizgisini kesen yay; doğrulanmayan döndürme |
+
+Eksenin neden asla tahmin edilmediği: eksen, parçadaki bütün çapları belirler.
+Yanlış tahmin edilmiş bir eksen, bozuk olduğu belli bir model üretmez — her
+yarıçapı yanlış, ikna edici bir model üretir, ve birileri onu ölçer. Neyin eksik
+olduğunu söyleyen bir ret, makul görünen bir katıdan daha değerlidir.
+
+Çıkan şey sıradan bir B-rep'tir ve öyle muamele görür: STEP dosyasıyla aynı
+tessellation, aynı face_groups, aynı exact kenarlar ve snap hedefleri. Yani her
+ölçüm ve kesit aracı üzerinde değişmeden çalışır. Belirsiz olan sayılar değil,
+bunun doğru parça olup olmadığıdır; etiket ve kaydedilen varsayımlar bunun
+içindir.
+
+Görüntü değil DXF: DXF'te açıklamalar ayrı bir varlık tipidir, dolayısıyla
+parçayı sayfadan ayırmak bir görüntü işleme problemi değil, bir filtredir.
+Burada hiçbir şey piksel okumaz.

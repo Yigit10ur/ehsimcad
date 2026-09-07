@@ -105,3 +105,29 @@ def test_the_face_groups_tile_the_triangles(tmp_path):
     assert groups[0][0] == 0
     for (_, end), (start, _) in zip(groups, groups[1:], strict=False):
         assert start == end
+
+
+def test_a_picture_of_the_drawing_gives_the_drawing_s_part(tmp_path):
+    """The third reader, held to the same shaft as the other two.
+
+    A picture is the least a drawing can arrive as, and it shows: this is right
+    to within a percent rather than to the eighth decimal place. What it gets
+    exactly is the shape -- the same eight edges, the same four cylinders and
+    four flat faces -- and that is the part of the answer somebody looks at.
+    """
+    from app.cad import raster
+
+    out = tmp_path / "scan.glb"
+    result = raster.convert(FIXTURES / "stepped_shaft_scan.jpg", out, length_mm=90)
+
+    volume = result.metadata.parts["n1"].volume_mm3
+    assert volume == pytest.approx(STEPPED_VOLUME, rel=0.02)
+
+    kinds = sorted(f.kind for f in result.metadata.snap["n1"].faces)
+    assert kinds == ["cylinder"] * 4 + ["plane"] * 4
+
+    assert result.metadata.geometry_source == "derived"
+    assert result.metadata.derived.method == "raster-revolve"
+    said = " ".join(result.metadata.derived.assumptions)
+    assert "read from a picture" in said
+    assert "heavier lines" in said

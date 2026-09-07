@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { db, schema } from '@/db';
 import { env } from '@/lib/env';
-import { extensionOf, formatOf, needsLength, rejectionReason } from '@/lib/formats';
+import { extensionOf, formatOf, lengthNeeded, rejectionReason } from '@/lib/formats';
 import { canWrite, currentUser, personalProject, readableProjects } from '@/lib/session';
 import { presignUpload, storageKeys } from '@/lib/storage';
 
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
       sourceSizeBytes: sizeBytes,
       // Kept only where it means something. A length sent with a STEP file is
       // a mistake or a probe; either way it must not reach the converter.
-      sourceLengthMm: needsLength(filename) ? (lengthMm ?? null) : null,
+      sourceLengthMm: lengthNeeded(filename) === 'none' ? null : (lengthMm ?? null),
       createdBy: user.id,
     })
     .returning();

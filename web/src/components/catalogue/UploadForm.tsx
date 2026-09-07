@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 
-import { needsLength } from '@/lib/formats';
+import { lengthNeeded } from '@/lib/formats';
 import { stageLabel, uploadCadFile, type UploadStage } from '@/lib/upload';
 
 import { LengthPrompt } from './LengthPrompt';
@@ -55,6 +55,7 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
       {waiting && (
         <LengthPrompt
           filename={waiting.name}
+          required={lengthNeeded(waiting.name) === 'required'}
           onUpload={(lengthMm) => {
             const file = waiting;
             setWaiting(null);
@@ -99,8 +100,8 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (!file) return;
-          if (needsLength(file.name)) setWaiting(file);
-          else void upload(file);
+          if (lengthNeeded(file.name) === 'none') void upload(file);
+          else setWaiting(file);
         }}
       />
 

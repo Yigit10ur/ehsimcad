@@ -12,10 +12,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SUPPORTED_EXTENSIONS,
+  SUPPORTED_FORMATS,
   SUPPORTED_FORMAT_NAMES,
   extensionOf,
   formatOf,
-  needsLength,
+  lengthNeeded,
   rejectionReason,
 } from '@/lib/formats';
 
@@ -39,39 +40,56 @@ describe('what the catalogue says it accepts', () => {
 
   it('names nothing it does not accept', () => {
     // A name with no extension behind it is a promise the upload breaks.
-    for (const name of SUPPORTED_FORMAT_NAMES) {
-      expect(
-        SUPPORTED_EXTENSIONS.some((extension) =>
-          extension.slice(1).startsWith(name.toLowerCase().slice(0, 3)),
-        ),
-      ).toBe(true);
+    for (const format of SUPPORTED_FORMATS) {
+      expect(format.extensions.length).toBeGreaterThan(0);
+      for (const extension of format.extensions) {
+        expect(rejectionReason(`part${extension}`)).toBeNull();
+      }
     }
   });
 });
 
 describe('which uploads need a length telling', () => {
   /*
-   * A printed sheet carries the part at whatever scale it was plotted, and
-   * nothing in the file records which. Everything else either states its units
-   * or is a model already.
+   * Three answers, because there are three amounts a file can say about its
+   * own size. A model states its units. A printed sheet states a paper size,
+   * so it can be read without a length and say what it assumed. A picture
+   * states nothing at all.
    */
-  it('asks for one for a printed sheet', () => {
-    expect(needsLength('shaft.pdf')).toBe(true);
-    expect(needsLength('shaft.PDF')).toBe(true);
+  it('cannot read a picture without one', () => {
+    for (const filename of ['scan.png', 'scan.jpg', 'scan.JPEG', 'scan.tiff']) {
+      expect(lengthNeeded(filename)).toBe('required');
+    }
+  });
+
+  it('will take one for a printed sheet, and manage without', () => {
+    expect(lengthNeeded('shaft.pdf')).toBe('optional');
+    expect(lengthNeeded('shaft.PDF')).toBe('optional');
   });
 
   it.each(['shaft.dxf', 'shaft.step', 'shaft.stl', 'scene.glb'])(
-    'does not ask for one for %s, which knows its own size',
+    'never asks about %s, which knows its own size',
     (filename) => {
-      expect(needsLength(filename)).toBe(false);
+      expect(lengthNeeded(filename)).toBe('none');
     },
   );
 
   it('only asks about files that are accepted at all', () => {
     for (const extension of SUPPORTED_EXTENSIONS) {
-      if (needsLength(`part${extension}`)) {
+      if (lengthNeeded(`part${extension}`) !== 'none') {
         expect(rejectionReason(`part${extension}`)).toBeNull();
       }
+    }
+  });
+
+  it('asks about every picture it accepts', () => {
+    // A picture accepted without being asked would be read at whatever scale
+    // its pixels happened to be, which is no scale at all.
+    for (const extension of SUPPORTED_EXTENSIONS) {
+      const isPicture = ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp'].includes(
+        extension,
+      );
+      if (isPicture) expect(lengthNeeded(`part${extension}`)).toBe('required');
     }
   });
 });
@@ -124,9 +142,12 @@ describe('rejectionReason', () => {
       expect(reason).toContain('the part or assembly it documents');
     });
 
-    it.each(['plan.dxf', 'plan.DXF'])('accepts the drawing %s', (filename) => {
-      expect(rejectionReason(filename)).toBeNull();
-    });
+    it.each(['plan.dxf', 'plan.DXF', 'scan.png', 'scan.jpg'])(
+      'accepts the drawing %s',
+      (filename) => {
+        expect(rejectionReason(filename)).toBeNull();
+      },
+    );
 
     it('sends the holder of a DWG to DXF rather than to a modelling application', () => {
       const reason = rejectionReason('plan.dwg') ?? '';
@@ -143,16 +164,16 @@ describe('rejectionReason', () => {
     });
   });
 
-  describe('pictures of drawings', () => {
-    it.each(['scan.jpeg', 'scan.jpg', 'sheet.png', 'sheet.tif', 'photo.heic'])(
-      'sends the holder of %s to DXF rather than listing nine extensions',
+  describe('pictures', () => {
+    it.each(['photo.heic', 'sheet.avif', 'sheet.gif'])(
+      'sends the holder of %s somewhere useful rather than listing extensions',
       (filename) => {
         const reason = rejectionReason(filename) ?? '';
 
+        expect(reason).toContain('PNG or JPEG');
         expect(reason).toContain('DXF');
-        expect(reason).toContain('measured');
-        // The generic list helps least here: somebody holding a scan of a
-        // drawing has somewhere useful to go, and it is not ".stl".
+        // The generic list helps least here: somebody holding a picture of a
+        // drawing has somewhere to go, and it is not ".stl".
         expect(reason).not.toContain('.stl');
       },
     );

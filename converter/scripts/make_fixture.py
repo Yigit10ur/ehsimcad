@@ -36,6 +36,8 @@ PLAIN_SHAFT_FIXTURE = FIXTURES / "plain_shaft.dxf"
 PRINTED_FIXTURE = FIXTURES / "stepped_shaft_printed.pdf"
 PLOTTED_FIXTURE = FIXTURES / "stepped_shaft_plotted.pdf"
 FILLETED_FIXTURE = FIXTURES / "filleted_shaft_plotted.pdf"
+SCAN_FIXTURE = FIXTURES / "stepped_shaft_scan.png"
+SCAN_JPEG_FIXTURE = FIXTURES / "stepped_shaft_scan.jpg"
 
 
 def _translation(x: float, y: float, z: float) -> TopLoc_Location:
@@ -327,6 +329,73 @@ def write_printed_sheets() -> None:
     _report(FILLETED_FIXTURE)
 
 
+def write_scans() -> None:
+    """The same shaft as an image, twice.
+
+    Line weight is the whole of what tells the part from the annotation here,
+    so it is drawn the way the standard prescribes: the outline twice the
+    weight of everything else. Dimensions, an arrow, a note and a title block
+    are on the sheet for the same reason they are on the DXF -- a reader tested
+    against a bare outline is tested against an easier drawing than exists.
+
+    The JPEG is the one that matters: it is what a drawing arrives as, and its
+    compression puts a halo around every line that the PNG does not have.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from PIL import Image
+
+    outline = [(0, 4), (0, 10), (30, 10), (30, 15), (70, 15), (70, 8), (90, 8), (90, 4)]
+
+    figure = plt.figure(figsize=(11.69, 8.27))
+    axes = figure.add_axes([0, 0, 1, 1])
+    axes.set_axis_off()
+    axes.set_aspect("equal")
+    axes.set_xlim(-30, 120)
+    axes.set_ylim(-55, 55)
+
+    for sign in (1, -1):
+        axes.plot(
+            [x for x, _ in outline],
+            [sign * y for _, y in outline],
+            color="k",
+            lw=1.4,  # the outline: twice the weight of everything else
+        )
+        axes.plot(
+            [0, 90], [sign * 4, sign * 4], linestyle=(0, (4, 2)), color="k", lw=0.7
+        )
+
+    axes.plot([-8, 98], [0, 0], linestyle=(0, (8, 2, 1, 2)), color="k", lw=0.7)
+
+    axes.annotate(
+        "",
+        xy=(0, 22),
+        xytext=(90, 22),
+        arrowprops={"arrowstyle": "<->", "lw": 0.7, "color": "k"},
+    )
+    axes.plot([0, 0], [10, 23], color="k", lw=0.7)
+    axes.plot([90, 90], [8, 23], color="k", lw=0.7)
+    axes.text(40, 24, "90", fontsize=9)
+    axes.text(2, 30, "MATERIAL: C45", fontsize=8)
+
+    for a, b in [
+        ((-20, -45), (110, -45)),
+        ((110, -45), (110, -30)),
+        ((110, -30), (-20, -30)),
+        ((-20, -30), (-20, -45)),
+    ]:
+        axes.plot([a[0], b[0]], [a[1], b[1]], color="k", lw=0.7)
+
+    figure.savefig(SCAN_FIXTURE, dpi=200)
+    plt.close(figure)
+    _report(SCAN_FIXTURE)
+
+    Image.open(SCAN_FIXTURE).convert("L").save(SCAN_JPEG_FIXTURE, quality=80)
+    _report(SCAN_JPEG_FIXTURE)
+
+
 def _report(path: Path) -> None:
     print(f"wrote {path.name} ({path.stat().st_size} bytes)")
 
@@ -338,6 +407,7 @@ def main() -> None:
     write_meshes()
     write_drawings()
     write_printed_sheets()
+    write_scans()
 
 
 if __name__ == "__main__":

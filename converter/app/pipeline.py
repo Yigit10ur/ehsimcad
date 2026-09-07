@@ -17,7 +17,14 @@ MESH_FORMATS = {".stl", ".obj", ".ply"}
 # a line is still a line, with coordinates -- and loses only the names for
 # things, which is why it has a reader of its own.
 DRAWING_FORMATS = {".dxf", ".pdf"}
-SUPPORTED_FORMATS = BREP_FORMATS | MESH_FORMATS | DRAWING_FORMATS | {".glb", ".gltf"}
+
+# And a picture of one. The least a drawing can arrive as: no entity types, no
+# paths, no units -- only dark pixels, and the two things the drawing standard
+# guarantees about them. Which is why this one is told how long the part is.
+RASTER_FORMATS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+SUPPORTED_FORMATS = (
+    BREP_FORMATS | MESH_FORMATS | DRAWING_FORMATS | RASTER_FORMATS | {".glb", ".gltf"}
+)
 
 
 class UnsupportedFormatError(ValueError):
@@ -54,7 +61,7 @@ def convert(
     if suffix not in SUPPORTED_FORMATS:
         raise UnsupportedFormatError(f"unsupported format: {suffix}")
 
-    if suffix in BREP_FORMATS or suffix in DRAWING_FORMATS:
+    if suffix in BREP_FORMATS or suffix in DRAWING_FORMATS or suffix in RASTER_FORMATS:
         from app.cad import occt
 
         if not occt.available():
@@ -62,6 +69,11 @@ def convert(
                 "OCCT bindings are not installed; "
                 'run: pip install -e ".[cad]" or use the Docker image'
             )
+        if suffix in RASTER_FORMATS:
+            from app.cad import raster
+
+            return raster.convert(source, out_glb, length_mm=length_mm)
+
         if suffix == ".pdf":
             from app.cad import pdf
 

@@ -34,21 +34,30 @@ export const SUPPORTED_FORMATS = [
   // The same drawing after it was printed. It keeps the geometry -- a line is
   // still a line, with coordinates -- and loses only the names for things.
   { name: 'PDF', extensions: ['.pdf'] },
+  // And a picture of one, which keeps nothing but dark pixels. Named as a
+  // group: nobody chooses between PNG and TIFF, they upload what they have.
+  { name: 'images', extensions: ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp'] },
 ] as const;
 
 /**
- * Files that carry a shape but not a size, and so need one telling.
+ * Whether a file needs to be told how long the part is, and how badly.
  *
- * A printed sheet is drawn at whatever scale it was plotted at, and nothing in
- * it says which. Without a length the part is taken to have been printed full
- * size, which is usually wrong -- so the length is asked for rather than
- * assumed, and only where it is genuinely missing. A DXF has real coordinates
- * and is never asked.
+ * A DXF has real coordinates and is never asked. A printed sheet is drawn at
+ * whatever scale it was plotted at, so a length settles it -- but a sheet at
+ * least has a paper size, so it can be read without one and say what it
+ * assumed. A picture has nothing: the same image is a bolt or a bridge, and
+ * there is no reading of it at all without being told which.
  */
-const SIZELESS = ['.pdf'];
+export type LengthNeed = 'required' | 'optional' | 'none';
 
-export function needsLength(filename: string): boolean {
-  return SIZELESS.includes(extensionOf(filename));
+const IMAGE_EXTENSIONS: readonly string[] =
+  SUPPORTED_FORMATS.find((format) => format.name === 'images')?.extensions ?? [];
+
+export function lengthNeeded(filename: string): LengthNeed {
+  const extension = extensionOf(filename);
+  if (IMAGE_EXTENSIONS.includes(extension)) return 'required';
+  if (extension === '.pdf') return 'optional';
+  return 'none';
 }
 
 export const SUPPORTED_EXTENSIONS: readonly string[] = SUPPORTED_FORMATS.flatMap(
@@ -113,11 +122,12 @@ const NATIVE_FORMATS: Record<string, NativeFormat> = {
 const DRAWING_EXCHANGE = ['.dwg'];
 
 /**
- * Scans and screenshots. Worth naming rather than falling through to the list
- * of supported extensions, because somebody holding one of these is holding a
- * drawing and has somewhere useful to go.
+ * Picture formats that cannot be opened, next to the ones that can.
+ *
+ * Somebody holding one of these is holding a drawing and has somewhere useful
+ * to go, and it is one Save As away rather than back to the CAD system.
  */
-const PICTURES = ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.gif', '.webp', '.heic'];
+const PICTURES = ['.heic', '.heif', '.avif', '.gif'];
 
 export function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf('.');
@@ -156,11 +166,7 @@ export function rejectionReason(filename: string): string | null {
   if (native) return nativeMessage(extension, native);
 
   if (PICTURES.includes(extension)) {
-    // The likeliest thing anybody holding a drawing tries first, and the one
-    // rejection where listing nine extensions helps least. A picture of a
-    // drawing carries no geometry at all: every line in it is a row of dark
-    // pixels, and a dimension is a row of dark pixels too.
-    return `${extension} is a picture of a drawing, not a drawing. Nothing in it can be measured. Save the same drawing as DXF and upload that.`;
+    return `${extension} is a picture this cannot open. Save it as PNG or JPEG — or, better, save the drawing itself as DXF.`;
   }
 
   if (DRAWING_EXCHANGE.includes(extension)) {

@@ -32,7 +32,7 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-429 tests pass: 316 in `web` (vitest, against an in-process Postgres), 113 in
+444 tests pass: 316 in `web` (vitest, against an in-process Postgres), 128 in
 `converter` (pytest; the geometry ones skip where OCCT is not installed, which
 is CI -- the drawing reader does not, because deciding what a drawing means is
 where being wrong is invisible).
@@ -271,6 +271,36 @@ the part at whatever scale it was plotted, and nothing in the file says which.
 One known length settles it; without one the sheet is taken as printed full
 size and the assumption is stated with the length it implies, which is how
 somebody who knows the part sees it is wrong.
+
+**A picture of a drawing is read too, and by what the standard guarantees.**
+An image says only that some pixels are dark: no entity types, no paths, no
+units. Two conventions make it readable anyway. An outline is drawn about twice
+the weight of a dimension line -- measured off the sheet rather than assumed, so
+nothing depends on a resolution nobody stated -- and a centre line alternates
+two mark lengths where a hidden edge repeats one, which is the same rule the PDF
+reader uses on path segments, applied to runs of pixels.
+
+A sheet drawn in one weight is refused. There would be no way to tell the part
+from what is written about it, and a profile built from dimension lines is a
+confident wrong answer.
+
+**The profile is read column by column rather than traced.** A solid of
+revolution is a radius at each position along its axis, so there is no outline
+to follow and no corner to find: the outline is whatever is furthest from the
+axis in each column. It is why a groove reads correctly and an undercut cannot.
+
+**A stroke has width, and that shows up twice.** Where the outline turns, the
+middle of the stroke turns with it over about that width; where a hidden line
+ends, its cap stops short of the face. Read literally that is a small chamfer at
+every step and a lid on every through bore. Both are taken back off -- anything
+shorter than a few stroke widths is the corner between the edges either side,
+replaced by where they actually meet.
+
+**The result is right to about a percent, and the shape is right exactly.**
+37,501 mm3 against the 37,196 the DXF gives for the same shaft: eight edges,
+four cylinders, four flat faces, the same topology from all three readers. The
+PNG and the JPEG of the same sheet agree to four decimal places, which says the
+threshold sees past compression.
 
 **The length is asked for at the upload, and only where it is missing.** It is
 the one number that needs no measuring off a screen: the overall length, which
@@ -535,7 +565,7 @@ with GitHub breaks the moment the domain moves without it.
 | `app/storage.py` | S3-compatible download and upload. |
 | `app/config.py` | Settings, deliberately sharing the web application's variable names. |
 | `app/cli.py`, `app/main.py` | A one-shot convert command, and a health endpoint. |
-| `scripts/make_fixture.py` | Generates every test fixture, including two DXF drawings written the way an office draws them -- mirrored about the centre line, bore dashed, dimensions and a title block on top -- and three PDFs: two prints of the same shaft dashed the two ways a PDF can be, and one with a fillet. |
+| `scripts/make_fixture.py` | Generates every test fixture, including two DXF drawings written the way an office draws them -- mirrored about the centre line, bore dashed, dimensions and a title block on top -- three PDFs (two prints of the same shaft dashed the two ways a PDF can be, and one with a fillet), and the same shaft again as a PNG and a JPEG, drawn with the outline at twice the weight of everything else. |
 | `scripts/make_large_assembly.py` | Generates an assembly of N parts, repeated or distinct, for scale measurement. |
 | `tests/` | Geometry against analytically known values; the naming rule; the mesh path's honesty about what it cannot measure. |
 
@@ -584,6 +614,7 @@ with GitHub breaks the moment the domain moves without it.
 | `lib/mail.ts` | The provider, reached over plain HTTP. Logs instead of sending when unconfigured. |
 | `lib/storage.ts` | Presigned URLs, the storage key layout, and deletion -- one request per key, because every S3 implementation answers the single-object form and the batch one reports partial failure in the body rather than the status. |
 | `lib/upload.ts` | The three-step upload, in one place so a new model and a new revision cannot drift apart. |
+| `app/cad/raster.py` | The same, out of a picture: stroke weights measured off the sheet, dashes read off runs of pixels, and the profile taken column by column. Hands over to `drawing.py` the moment it has curves. |
 | `components/catalogue/LengthPrompt.tsx` | Asks how long the part is, for a file that carries a shape without a size. Offers a way past it, and says what going past it costs. |
 | `lib/formats.ts` | One list of what is accepted, read by both the catalogue heading and the rejection so they cannot disagree. The message fits the file: DWG and a scan of a drawing are both sent to DXF, which is where their holder can actually get to. |
 | `lib/converter.ts` | Asks GitHub to start a conversion run. Built from `GITHUB_REPOSITORY`, and silent when it fails: an upload that cannot summon a worker is still a good upload. |

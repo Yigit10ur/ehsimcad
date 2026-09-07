@@ -15,6 +15,7 @@ import {
   SUPPORTED_FORMAT_NAMES,
   extensionOf,
   formatOf,
+  needsLength,
   rejectionReason,
 } from '@/lib/formats';
 
@@ -44,6 +45,33 @@ describe('what the catalogue says it accepts', () => {
           extension.slice(1).startsWith(name.toLowerCase().slice(0, 3)),
         ),
       ).toBe(true);
+    }
+  });
+});
+
+describe('which uploads need a length telling', () => {
+  /*
+   * A printed sheet carries the part at whatever scale it was plotted, and
+   * nothing in the file records which. Everything else either states its units
+   * or is a model already.
+   */
+  it('asks for one for a printed sheet', () => {
+    expect(needsLength('shaft.pdf')).toBe(true);
+    expect(needsLength('shaft.PDF')).toBe(true);
+  });
+
+  it.each(['shaft.dxf', 'shaft.step', 'shaft.stl', 'scene.glb'])(
+    'does not ask for one for %s, which knows its own size',
+    (filename) => {
+      expect(needsLength(filename)).toBe(false);
+    },
+  );
+
+  it('only asks about files that are accepted at all', () => {
+    for (const extension of SUPPORTED_EXTENSIONS) {
+      if (needsLength(`part${extension}`)) {
+        expect(rejectionReason(`part${extension}`)).toBeNull();
+      }
     }
   });
 });
@@ -129,10 +157,8 @@ describe('rejectionReason', () => {
       },
     );
 
-    it('sends the holder of a PDF to DXF as well', () => {
-      const reason = rejectionReason('sheet.pdf') ?? '';
-      expect(reason).toContain('DXF');
-      expect(reason).not.toContain('.stl');
+    it('accepts a PDF, which is a drawing rather than a picture of one', () => {
+      expect(rejectionReason('sheet.pdf')).toBeNull();
     });
   });
 

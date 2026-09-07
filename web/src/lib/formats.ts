@@ -31,7 +31,25 @@ export const SUPPORTED_FORMATS = [
   // that nothing it produces is taken for a part somebody modelled. See
   // ARCHITECTURE.md section 12.
   { name: 'DXF', extensions: ['.dxf'] },
+  // The same drawing after it was printed. It keeps the geometry -- a line is
+  // still a line, with coordinates -- and loses only the names for things.
+  { name: 'PDF', extensions: ['.pdf'] },
 ] as const;
+
+/**
+ * Files that carry a shape but not a size, and so need one telling.
+ *
+ * A printed sheet is drawn at whatever scale it was plotted at, and nothing in
+ * it says which. Without a length the part is taken to have been printed full
+ * size, which is usually wrong -- so the length is asked for rather than
+ * assumed, and only where it is genuinely missing. A DXF has real coordinates
+ * and is never asked.
+ */
+const SIZELESS = ['.pdf'];
+
+export function needsLength(filename: string): boolean {
+  return SIZELESS.includes(extensionOf(filename));
+}
 
 export const SUPPORTED_EXTENSIONS: readonly string[] = SUPPORTED_FORMATS.flatMap(
   (format) => format.extensions,
@@ -143,10 +161,6 @@ export function rejectionReason(filename: string): string | null {
     // drawing carries no geometry at all: every line in it is a row of dark
     // pixels, and a dimension is a row of dark pixels too.
     return `${extension} is a picture of a drawing, not a drawing. Nothing in it can be measured. Save the same drawing as DXF and upload that.`;
-  }
-
-  if (extension === '.pdf') {
-    return `${extension} is not read. The application that made it can save the same drawing as DXF — upload that instead.`;
   }
 
   if (DRAWING_EXCHANGE.includes(extension)) {

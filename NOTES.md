@@ -32,7 +32,7 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-416 tests pass: 308 in `web` (vitest, against an in-process Postgres), 108 in
+429 tests pass: 316 in `web` (vitest, against an in-process Postgres), 113 in
 `converter` (pytest; the geometry ones skip where OCCT is not installed, which
 is CI -- the drawing reader does not, because deciding what a drawing means is
 where being wrong is invisible).
@@ -271,6 +271,14 @@ the part at whatever scale it was plotted, and nothing in the file says which.
 One known length settles it; without one the sheet is taken as printed full
 size and the assumption is stated with the length it implies, which is how
 somebody who knows the part sees it is wrong.
+
+**The length is asked for at the upload, and only where it is missing.** It is
+the one number that needs no measuring off a screen: the overall length, which
+is on the drawing. It travels on the version row and is read back by the
+worker, and it is dropped for any format that states its own units -- a length
+sent with a STEP file would be a way to quietly rescale a model that was
+already right. Skipping is allowed and says what it costs, because somebody
+passing on a supplier's drawing may genuinely not know.
 
 **The axis is never inferred, and that is the decision to keep.** It fixes
 every diameter in the part, so an axis guessed wrongly does not produce an
@@ -576,6 +584,7 @@ with GitHub breaks the moment the domain moves without it.
 | `lib/mail.ts` | The provider, reached over plain HTTP. Logs instead of sending when unconfigured. |
 | `lib/storage.ts` | Presigned URLs, the storage key layout, and deletion -- one request per key, because every S3 implementation answers the single-object form and the batch one reports partial failure in the body rather than the status. |
 | `lib/upload.ts` | The three-step upload, in one place so a new model and a new revision cannot drift apart. |
+| `components/catalogue/LengthPrompt.tsx` | Asks how long the part is, for a file that carries a shape without a size. Offers a way past it, and says what going past it costs. |
 | `lib/formats.ts` | One list of what is accepted, read by both the catalogue heading and the rejection so they cannot disagree. The message fits the file: DWG and a scan of a drawing are both sent to DXF, which is where their holder can actually get to. |
 | `lib/converter.ts` | Asks GitHub to start a conversion run. Built from `GITHUB_REPOSITORY`, and silent when it fails: an upload that cannot summon a worker is still a good upload. |
 | `lib/models.ts` | Who may delete a model, and deleting one. The rule is a pure function so the route and the catalogue cannot disagree about whether to draw the button. |

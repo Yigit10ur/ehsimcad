@@ -3,7 +3,10 @@
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 
+import { needsLength } from '@/lib/formats';
 import { stageLabel, uploadCadFile, type UploadStage } from '@/lib/upload';
+
+import { LengthPrompt } from './LengthPrompt';
 
 export type Destination = { id: string; name: string };
 
@@ -11,6 +14,12 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<UploadStage>('idle');
+  /*
+   * A file that has been chosen and not yet sent, because it carries a shape
+   * without a size and the length has still to be asked for. Everything else
+   * goes straight up, as it always did.
+   */
+  const [waiting, setWaiting] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState(destinations[0]?.id);
 
@@ -27,11 +36,11 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
     );
   }
 
-  async function upload(file: File) {
+  async function upload(file: File, lengthMm?: number) {
     setError(null);
 
     try {
-      await uploadCadFile(file, { projectId }, setStage);
+      await uploadCadFile(file, { projectId }, setStage, lengthMm);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -43,6 +52,18 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
 
   return (
     <div className="flex flex-col items-end gap-2">
+      {waiting && (
+        <LengthPrompt
+          filename={waiting.name}
+          onUpload={(lengthMm) => {
+            const file = waiting;
+            setWaiting(null);
+            void upload(file, lengthMm);
+          }}
+          onCancel={() => setWaiting(null)}
+        />
+      )}
+
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -77,7 +98,9 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
-          if (file) void upload(file);
+          if (!file) return;
+          if (needsLength(file.name)) setWaiting(file);
+          else void upload(file);
         }}
       />
 

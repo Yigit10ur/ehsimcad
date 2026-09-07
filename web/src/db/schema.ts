@@ -10,6 +10,7 @@
 import { relations, sql } from 'drizzle-orm';
 import {
   bigint,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -156,6 +157,17 @@ export const modelVersions = pgTable(
     sourceFilename: text('source_filename'),
     sourceFormat: text('source_format').notNull(),
     sourceSizeBytes: bigint('source_size_bytes', { mode: 'number' }).notNull(),
+    /**
+     * How long the part is along its own axis, in millimetres, when the file
+     * does not say.
+     *
+     * A printed sheet carries the part at whatever scale it was plotted and
+     * nothing in it records which, so one known length is what turns a shape
+     * into a size. Null everywhere else, and on a sheet whose uploader did not
+     * know -- there the sheet is taken as printed full size and the model says
+     * so.
+     */
+    sourceLengthMm: doublePrecision('source_length_mm'),
 
     glbKey: text('glb_key'),
     metadataKey: text('metadata_key'),

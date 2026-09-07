@@ -6,7 +6,7 @@ have to be re-derived from the code, and the measurements are the ones nobody
 should have to take twice.
 
 Started 2026-08-24. This snapshot: 2026-09-07, describing `main` through
-`999b3ff`.
+`8aff4bc`.
 
 (A commit, and "through" rather than "at". It was a count twice and wrong both
 times, because the merge that lands an update to this file is itself counted --
@@ -297,10 +297,20 @@ shorter than a few stroke widths is the corner between the edges either side,
 replaced by where they actually meet.
 
 **The result is right to about a percent, and the shape is right exactly.**
-37,501 mm3 against the 37,196 the DXF gives for the same shaft: eight edges,
-four cylinders, four flat faces, the same topology from all three readers. The
-PNG and the JPEG of the same sheet agree to four decimal places, which says the
-threshold sees past compression.
+The same shaft, measured from each of the three:
+
+| Read from | Volume |
+|---|---|
+| `stepped_shaft.dxf` | 37,196.46 mm3 |
+| a print of it, as PDF | 37,196.46 mm3 |
+| `stepped_shaft_scan.png` | 37,501.23 mm3 |
+| `stepped_shaft_scan.jpg` | 37,502.61 mm3 |
+
+Eight edges, four cylinders and four flat faces from all four: the topology is
+exact even where the numbers are not. The PNG and the JPEG agree to within a
+thousandth of a percent, which says the threshold sees past compression, and
+the reading is deterministic -- the same file gives the same figure every
+time.
 
 **The length is asked for at the upload, and only where it is missing.** It is
 the one number that needs no measuring off a screen: the overall length, which

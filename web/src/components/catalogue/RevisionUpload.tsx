@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-import { needsLength } from '@/lib/formats';
+import { lengthNeeded } from '@/lib/formats';
 import { stageLabel, uploadCadFile, type UploadStage } from '@/lib/upload';
 
 import { LengthPrompt } from './LengthPrompt';
@@ -58,6 +58,7 @@ export function RevisionUpload({ modelId, converting }: Props) {
         <div className="absolute top-full right-0 z-20 pt-2">
           <LengthPrompt
             filename={waiting.name}
+            required={lengthNeeded(waiting.name) === 'required'}
             onUpload={(lengthMm) => {
               const file = waiting;
               setWaiting(null);
@@ -92,8 +93,8 @@ export function RevisionUpload({ modelId, converting }: Props) {
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (!file) return;
-          if (needsLength(file.name)) setWaiting(file);
-          else void upload(file);
+          if (lengthNeeded(file.name) === 'none') void upload(file);
+          else setWaiting(file);
         }}
       />
     </div>

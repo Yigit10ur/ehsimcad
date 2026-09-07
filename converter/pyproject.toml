@@ -30,6 +30,12 @@ dependencies = [
     # ezdxf: it is pure Python, and everything it feeds -- which line is the
     # axis, which outline is the part -- is what has to be covered in CI.
     "pdfminer.six>=20240706",
+    # Reading pictures of drawings. Pillow decodes them; scipy measures them --
+    # stroke widths, connected marks, which of them the centre line runs
+    # through. Both in the base install for the same reason as the other two
+    # readers: everything they decide is what CI has to be able to cover.
+    "pillow>=10.0",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]

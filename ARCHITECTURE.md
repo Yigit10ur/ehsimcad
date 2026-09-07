@@ -368,13 +368,29 @@ Yalnızca tek tip tahmin yapılır, çünkü yapmaya değecek kadar dar olan tek
 budur: tornalanmış parça, bir eksen etrafında döndürülmüş bir profildir ve resim
 ikisini de gösterir.
 
-Bu yolla iki dosya okunur. **DXF** her işaretin ne olduğunu söyler, dolayısıyla
-filtreler varlık tipine göredir. **PDF** — aynı çizimin basılmış hâli — yalnızca
-her işaretin nasıl çizildiğini söyler, dolayısıyla filtreler nasıl'a göredir:
-her harf ve her ok ucu doludur ve asla çizgi değildir, bu tek test açıklamaları
-parçadan ayırır; kesik çizgi ise ya bir çizgi üzerindeki desen ya da arka arkaya
-kısa çizgiler olarak gelir, eksen çizgisi böyle bulunur. İkisi de aynı yerde
-biter ve oradan sonra hiçbir şey hangisi olduğunu bilmez.
+Bu yolla üç dosya okunur; her biri bir öncekinden az şey söyler ve üçü de aynı
+yerde biter — eğriler ve bir eksen çizgisi — oradan sonra hiçbir şey hangisi
+olduğunu bilmez.
+
+**DXF** her işaretin ne olduğunu söyler, filtreler varlık tipine göredir. **PDF**
+— aynı çizimin basılmış hâli — yalnızca her işaretin nasıl çizildiğini söyler:
+her harf ve her ok ucu doludur ve asla çizgi değildir; kesik çizgi ise ya bir
+desen ya da arka arkaya kısa çizgiler olarak gelir.
+
+**Görüntü** yalnızca bazı piksellerin koyu olduğunu söyler. Okunabilir kılan iki
+şey dosyada değil, çizim standardındadır: kontur, ölçü çizgisinin yaklaşık iki
+katı kalınlıkta çizilir; eksen çizgisi iki farklı uzunlukta işaret sıralar, gizli
+kenar ise tek uzunluğu tekrarlar. Kalınlıklar varsayılmaz, sayfadan ölçülür —
+böylece kimsenin belirtmediği bir çözünürlüğe bağımlılık kalmaz. Tek kalınlıkta
+çizilmiş sayfa reddedilir: orada parçayı, hakkında yazılanlardan ayırmanın yolu
+yoktur.
+
+Profil sütun sütun okunur: dönel bir katı, ekseni boyunca her konumda bir
+yarıçaptır. Yani izlenecek kontur, bulunacak köşe yoktur. Kanalın doğru okunup
+alttan kesmenin okunamamasının sebebi de budur. Çizginin kalınlığından doğan iki
+düzeltme yapılır — konturun döndüğü yerdeki yuvarlanma ve gizli çizgiyi yüzeyden
+kısa bırakan uç — ikisi de çizimde olmayan bir pah gibi okunmak yerine geri
+alınır.
 
 | Adım | Yapılan | Reddedilen |
 |---|---|---|
@@ -382,7 +398,7 @@ biter ve oradan sonra hiçbir şey hangisi olduğunu bilmez.
 | Eksen | Çizgi tipi CENTER'a çözülen ya da katmanı CENTER / CENTRE / AXIS / EKSEN olan en uzun çizgi | Eksen çizgisi olmayan resim. Hiçbir şey eksen uydurmaz |
 | Profil | Eksenin iki yanında da kapalı konturlar kurulur, ekseni kesenler orada kesilir; eksene yaslanan kontur seçilir | Kapanmayan kontur; tek noktada buluşan üç uç |
 | Katı | `BRepPrimAPI_MakeRevol`, tam tur | Eksen çizgisini kesen yay; doğrulanmayan döndürme |
-| Ölçek (yalnızca PDF) | Biliniyorsa parçanın kendi ekseni boyunca uzunluğu. Bilinmiyorsa sayfa 1:1 basılmış sayılır ve bu varsayım, ima ettiği uzunlukla birlikte yazılır | — |
+| Ölçek | Parçanın kendi ekseni boyunca uzunluğu. Görüntü için zorunlu — içinde hiç birim yoktur; PDF için isteğe bağlı, verilmezse sayfa 1:1 basılmış sayılır ve varsayım ima ettiği uzunlukla yazılır | Uzunluk verilmemiş bir görüntü |
 
 PDF çember çizemez: yay, CAD'den yay olarak çıkar ve iki ya da üç kübik olarak
 gelir. Her biri geldiği çembere geri uydurulur — her örnek noktasına karşı
@@ -408,7 +424,8 @@ taraf döndürüldü, kesit ne kadar. `ignored`, sayfada olup parçaya girmeyend
 resim bunu orada söyler, başka hiçbir yerde söylemez. İkisi de viewer'ın
 özellikler panelinde, her sayının üstünde gösterilir.
 
-Görüntü değil DXF ya da PDF: ikisinde de açıklamalar, dosyanın kendi söylediği
-bir şeyle ayrılabilir; yani parçayı sayfadan ayırmak bir görüntü işleme problemi
-değil, bir filtredir. Ve geometri geometridir — çizgi, koyu piksel dizisi değil,
-koordinatlı bir çizgidir. Burada hiçbir şey piksel okumaz.
+Mümkünse her zaman DXF ya da PDF: ikisinde de açıklamalar dosyanın kendi
+söylediği bir şeyle ayrılır ve geometri geometridir — çizgi, koordinatlı bir
+çizgidir. Görüntü de okunur, çünkü çizim her zaman bundan iyisi olarak gelmez;
+ama okunma biçimi, söylenene değil çizim standardının garanti ettiğine dayanır
+ve sonuç yaklaşık yüzde bir doğrulukta — diğer ikisi kesindir.

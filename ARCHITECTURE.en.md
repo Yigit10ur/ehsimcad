@@ -376,13 +376,32 @@ Only one shape of guess is made, because only one is narrow enough to be
 worth making: a turned part is a profile revolved about an axis, and the
 drawing shows both.
 
-Two files are read this way. A **DXF** says what each mark is, so the filters
-are by entity type. A **PDF** -- the same drawing after it was printed -- says
-only how each mark was drawn, so the filters are by how: every glyph and every
-arrowhead is filled and never stroked, which separates the annotation from the
-part in one test, and a dashed line arrives as a pattern on a stroke or as a
-row of short strokes, which is how the centre line is found again. Both end at
-the same place, and from there on nothing knows which it was.
+Three files are read this way, each saying less than the last, and all three
+end at the same place -- curves and a centre line -- after which nothing knows
+which it was.
+
+A **DXF** says what each mark is, so the filters are by entity type. A **PDF**
+-- the same drawing after it was printed -- says only how each mark was drawn,
+so the filters are by how: every glyph and every arrowhead is filled and never
+stroked, which separates the annotation from the part in one test, and a dashed
+line arrives as a pattern on a stroke or as a row of short strokes, which is how
+the centre line is found again.
+
+An **image** says only that some pixels are dark. What makes it readable at all
+is two things the drawing standard guarantees rather than anything in the file:
+an outline is drawn about twice the weight of a dimension, and a centre line
+alternates two mark lengths where a hidden edge repeats one. The weights are
+measured off the sheet rather than assumed, so nothing depends on a resolution
+nobody stated; a sheet drawn in a single weight is refused, because there would
+be no way to tell the part from what is written about it.
+
+The profile itself is read off column by column: a solid of revolution is a
+radius at each position along its axis, so there are no outlines to trace and
+no corners to find. That is also why a groove is read correctly and an undercut
+cannot be. Two corrections follow from the stroke having width -- the rounding
+where the outline turns, and the cap that pulls a hidden line short of the face
+-- and both are taken back off rather than read as a chamfer that is not on the
+drawing.
 
 | Step | What is done | What is refused |
 |---|---|---|
@@ -390,7 +409,7 @@ the same place, and from there on nothing knows which it was.
 | Axis | The longest line whose linetype resolves to CENTER, or whose layer is named CENTER / CENTRE / AXIS / EKSEN | A drawing with no centre line. Nothing infers one |
 | Profile | Closed outlines are assembled on both sides of the axis, cut where they cross it; the one lying against the axis wins | An outline that does not close, or three ends meeting at one point |
 | Solid | `BRepPrimAPI_MakeRevol`, a full turn | An arc drawn across the centre line; a revolve that does not validate |
-| Size (PDF only) | The part's length along its axis, when it is known. Otherwise the sheet is taken to have been printed full size, and the assumption is stated with the length it implies | — |
+| Size | The part's length along its axis. Required for an image, which carries no units at all; optional for a PDF, where the sheet is otherwise taken to have been printed full size and the assumption is stated with the length it implies | An image with no length given |
 
 A PDF cannot draw a circle: an arc leaves the CAD application as an arc and
 arrives as two or three cubics. Each is fitted back to the circle it came from
@@ -416,8 +435,9 @@ sheet and is not in the part, and it is the first place to look when the shape
 is wrong: a drawing whose outline arrived as splines says so there and nowhere
 else. Both are shown in the viewer's properties panel, above any number.
 
-DXF or PDF rather than an image: in both, the annotation is separable by
-something the file states, so telling the part from the sheet is a filter
-rather than a computer vision problem. And the geometry is geometry -- a line
-is a line with coordinates, not a row of dark pixels. Nothing here reads
-pixels.
+A DXF or a PDF in preference to an image, always: in both, the annotation is
+separable by something the file states, and the geometry is geometry -- a line
+is a line with coordinates. An image is read too, because a drawing does not
+always arrive as anything better, but it is read by measuring what the drawing
+standard guarantees rather than by being told, and it is right to about a
+percent where the other two are exact.

@@ -4,6 +4,8 @@ import { useState } from 'react';
 
 interface Props {
   filename: string;
+  /** True when the file carries no size at all, and so cannot be read without one. */
+  required: boolean;
   onUpload: (lengthMm?: number) => void;
   onCancel: () => void;
 }
@@ -21,7 +23,7 @@ interface Props {
  * drawing on may genuinely not know, and a model with its proportions right
  * and its scale stated as a guess is worth more than no model.
  */
-export function LengthPrompt({ filename, onUpload, onCancel }: Props) {
+export function LengthPrompt({ filename, required, onUpload, onCancel }: Props) {
   const [value, setValue] = useState('');
 
   const length = Number(value);
@@ -63,13 +65,20 @@ export function LengthPrompt({ filename, onUpload, onCancel }: Props) {
       </div>
 
       <div className="flex items-baseline justify-between pt-2">
-        <button
-          type="button"
-          onClick={() => onUpload(undefined)}
-          className="text-[11px] text-slate-500 underline underline-offset-2 hover:text-slate-700"
-        >
-          I don&apos;t know
-        </button>
+        {/* Offered only where there is something to fall back on. A picture has
+            no size in it at all, so skipping would not produce a model with a
+            doubtful scale -- it would produce nothing. */}
+        {required ? (
+          <span className="text-[11px] text-slate-400">Needed to read a picture</span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onUpload(undefined)}
+            className="text-[11px] text-slate-500 underline underline-offset-2 hover:text-slate-700"
+          >
+            I don&apos;t know
+          </button>
+        )}
         <button
           type="button"
           onClick={onCancel}
@@ -80,8 +89,9 @@ export function LengthPrompt({ filename, onUpload, onCancel }: Props) {
       </div>
 
       <p className="pt-2 text-[11px] leading-relaxed text-slate-400">
-        Without it the sheet is taken as printed full size. The model still opens, and
-        says what it assumed.
+        {required
+          ? 'A picture carries no units: the same image could be a bolt or a bridge.'
+          : 'Without it the sheet is taken as printed full size. The model still opens, and says what it assumed.'}
       </p>
     </div>
   );

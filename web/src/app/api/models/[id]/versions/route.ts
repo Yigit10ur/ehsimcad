@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 import { db, schema } from '@/db';
 import { env } from '@/lib/env';
-import { extensionOf, formatOf, needsLength, rejectionReason } from '@/lib/formats';
+import { extensionOf, formatOf, lengthNeeded, rejectionReason } from '@/lib/formats';
 import { currentUser, writableModel } from '@/lib/session';
 import { presignUpload, storageKeys } from '@/lib/storage';
 
@@ -69,7 +69,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       sourceSizeBytes: sizeBytes,
       // Kept only where it means something -- see the same line in
       // `api/models/route.ts`.
-      sourceLengthMm: needsLength(filename) ? (body.data.lengthMm ?? null) : null,
+      sourceLengthMm:
+        lengthNeeded(filename) === 'none' ? null : (body.data.lengthMm ?? null),
       createdBy: user.id,
     })
     .returning();

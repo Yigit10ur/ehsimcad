@@ -37,6 +37,10 @@ export function PropertiesPanel({ metadata }: { metadata: ModelMetadata }) {
   const part = selected ? metadata.parts[selected] : null;
   const faceCount = selected ? (metadata.face_groups[selected]?.length ?? 0) : 0;
   const fromBrep = metadata.geometry_source !== 'mesh';
+  // A derived model is a B-rep and measures like one. What is uncertain is not
+  // the numbers but whether it is the right shape, so this is shown whether or
+  // not a part is selected -- before any number, rather than beside one.
+  const derived = metadata.geometry_source === 'derived' ? metadata.derived : null;
 
   const name = (() => {
     let found: string | null = null;
@@ -55,6 +59,38 @@ export function PropertiesPanel({ metadata }: { metadata: ModelMetadata }) {
       <div className="border-b border-slate-200 px-3 py-2">
         <h2 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">Properties</h2>
       </div>
+
+      {derived && (
+        <div className="border-b border-amber-200 bg-amber-50 px-3 py-2.5">
+          <h3 className="text-xs font-semibold text-amber-900">Reconstructed from a drawing</h3>
+          <p className="pt-1 text-[11px] leading-relaxed text-amber-800">
+            Not a model somebody built. It was worked out from a 2D drawing, and it is
+            right only if the reading below was.
+          </p>
+          <ul className="list-disc space-y-0.5 pt-2 pl-4 text-[11px] leading-relaxed text-amber-900/90">
+            {derived.assumptions.map((assumption) => (
+              <li key={assumption}>{assumption}</li>
+            ))}
+          </ul>
+
+          {/* Kept apart from the reading above, because it answers a different
+              question -- and because it is the first place to look when the
+              shape is wrong. A drawing whose outline arrived as splines says
+              so here, and nowhere else. */}
+          {derived.ignored.length > 0 && (
+            <>
+              <h4 className="pt-2.5 text-[11px] font-semibold text-amber-900">
+                Left out of the part
+              </h4>
+              <ul className="list-disc space-y-0.5 pt-1 pl-4 text-[11px] leading-relaxed text-amber-900/70">
+                {derived.ignored.map((entry) => (
+                  <li key={entry}>{entry}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
 
       {/* What to measure, while measuring. */}
       {measuring && <MeasurePanel />}
@@ -129,9 +165,11 @@ export function PropertiesPanel({ metadata }: { metadata: ModelMetadata }) {
                 uploaded, so the panel says which it is rather than letting the
                 reader assume the stronger one. */}
             <p className="pt-3 text-xs leading-relaxed text-slate-400">
-              {fromBrep
-                ? 'Exact values from the B-rep, not measured off the mesh.'
-                : 'Measured from the mesh. A mesh file carries no exact geometry, so these are as accurate as its triangles.'}
+              {derived
+                ? 'Exact values, from a shape read out of a drawing. They describe what was reconstructed, which is only the part if the reading above was right.'
+                : fromBrep
+                  ? 'Exact values from the B-rep, not measured off the mesh.'
+                  : 'Measured from the mesh. A mesh file carries no exact geometry, so these are as accurate as its triangles.'}
             </p>
           </>
         ) : (

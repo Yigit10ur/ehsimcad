@@ -43,13 +43,18 @@ def _saved(doc, tmp_path: Path, name: str = "case.dxf") -> Path:
     return path
 
 
+def area_of(doc, tmp_path: Path) -> float:
+    """Save the drawing, read it, and report the section it would revolve."""
+    return drawing.section_area(read(_saved(doc, tmp_path)).curves)
+
+
 # --- what the sheet holds that is not the part ----------------------------
 
 
 def test_dimensions_and_notes_do_not_reach_the_outline():
-    outline, axis, _units, notes = drawing.read_curves(STEPPED)
-    assert "1 DIMENSION ignored" in notes
-    assert "1 TEXT ignored" in notes
+    outline, axis, _units, ignored = drawing.read_curves(STEPPED)
+    assert "1 DIMENSION" in ignored
+    assert "1 TEXT" in ignored
     # 14 outline lines, 2 dashed bore lines, 4 of title block.
     assert len(outline) == 20
     assert len(axis) == 1
@@ -64,7 +69,10 @@ def test_the_title_block_is_not_mistaken_for_the_part():
     # The title block sits at y = -40 to -60. Nothing from it is here.
     assert min(ys) == pytest.approx(4.0)
     assert max(ys) == pytest.approx(15.0)
-    assert any("other closed outline" in note for note in profile.assumptions)
+    # Said, rather than silently dropped: a closed outline beside the part is
+    # exactly what somebody would want to hear about if the answer looks wrong.
+    assert "1 other closed outline on the sheet" in profile.ignored
+    assert not any("outline on the sheet" in note for note in profile.assumptions)
 
 
 def _tube_and_axis(msp) -> None:
@@ -103,8 +111,8 @@ def test_geometry_on_a_switched_off_layer_is_ignored(tmp_path):
     _decoy(msp, "SCRATCH")
 
     profile = read(_saved(doc, tmp_path))
-    assert drawing._area(profile.curves) == pytest.approx(60.0)
-    assert not any("other closed outline" in note for note in profile.assumptions)
+    assert drawing.section_area(profile.curves) == pytest.approx(60.0)
+    assert not any("other closed outline" in note for note in profile.ignored)
 
 
 def test_geometry_on_a_frozen_layer_is_ignored(tmp_path):
@@ -114,7 +122,7 @@ def test_geometry_on_a_frozen_layer_is_ignored(tmp_path):
     doc.layers.add("SCRATCH").freeze()
     _decoy(msp, "SCRATCH")
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(60.0)
+    assert area_of(doc, tmp_path) == pytest.approx(60.0)
 
 
 def test_the_defpoints_layer_is_not_geometry(tmp_path):
@@ -130,7 +138,7 @@ def test_the_defpoints_layer_is_not_geometry(tmp_path):
     assert "Defpoints" in doc.layers
     _decoy(msp, "Defpoints")
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(60.0)
+    assert area_of(doc, tmp_path) == pytest.approx(60.0)
 
 
 def test_a_decoy_that_is_visible_does_win(tmp_path):
@@ -144,7 +152,7 @@ def test_a_decoy_that_is_visible_does_win(tmp_path):
     _tube_and_axis(msp)
     _decoy(msp, "0")
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(6.0)
+    assert area_of(doc, tmp_path) == pytest.approx(6.0)
 
 
 # --- the axis -------------------------------------------------------------
@@ -206,13 +214,13 @@ def test_a_bored_part_is_closed_by_its_bore():
     profile = read(STEPPED)
     assert len(profile.curves) == 8
     # 6 x 30 + 11 x 40 + 4 x 20, the section of a shaft bored 4 through.
-    assert drawing._area(profile.curves) == pytest.approx(700.0)
+    assert drawing.section_area(profile.curves) == pytest.approx(700.0)
     assert any("bored" in note for note in profile.assumptions)
 
 
 def test_a_solid_part_is_closed_by_the_axis():
     profile = read(PLAIN)
-    assert drawing._area(profile.curves) == pytest.approx(500.0)
+    assert drawing.section_area(profile.curves) == pytest.approx(500.0)
     # The end faces are drawn straight across the centre line: both are cut at
     # it, and the axis itself closes the section.
     on_axis = [
@@ -258,7 +266,7 @@ def test_a_line_touching_the_outline_mid_span_is_dropped(tmp_path):
     msp.add_line((10, 5), (10, 12))
 
     profile = read(_saved(doc, tmp_path))
-    assert drawing._area(profile.curves) == pytest.approx(100.0)
+    assert drawing.section_area(profile.curves) == pytest.approx(100.0)
     assert max(p[1] for c in profile.curves for p in (c.start, c.end)) == pytest.approx(
         5.0
     )
@@ -329,7 +337,7 @@ def test_a_drawing_in_inches_arrives_in_millimetres(tmp_path):
     profile = read(_saved(doc, tmp_path))
     assert profile.units == "inches"
     # A 2 x 1 inch half section is 50.8 x 25.4 mm.
-    assert drawing._area(profile.curves) == pytest.approx(50.8 * 25.4)
+    assert drawing.section_area(profile.curves) == pytest.approx(50.8 * 25.4)
 
 
 def test_a_file_that_is_not_dxf_is_refused(tmp_path):
@@ -358,7 +366,7 @@ def test_a_half_view_is_read_from_the_side_it_was_drawn_on(tmp_path):
     msp.add_line((-4, 0), (29, 0), dxfattribs={"layer": "CENTER"})
 
     profile = read(_saved(doc, tmp_path))
-    assert drawing._area(profile.curves) == pytest.approx(200.0)
+    assert drawing.section_area(profile.curves) == pytest.approx(200.0)
     assert any("below the centre line" in note for note in profile.assumptions)
 
 
@@ -404,7 +412,7 @@ def test_a_polyline_corner_is_the_arc_it_draws(tmp_path, points, corner):
     assert len(arcs) == 1, corner
     assert arcs[0].length == pytest.approx(5 * math.pi / 2), corner
     # 20 x 10, less the square corner the fillet takes out of it.
-    assert drawing._area(profile.curves) == pytest.approx(
+    assert drawing.section_area(profile.curves) == pytest.approx(
         200 - (25 - 25 * math.pi / 4), rel=1e-3
     ), corner
 
@@ -438,7 +446,7 @@ def test_a_section_drawn_with_its_axis_edge_reads_the_same(tmp_path):
         msp.add_line(a, b)
     msp.add_line((-4, 0), (29, 0), dxfattribs={"layer": "CENTER"})
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(200.0)
+    assert area_of(doc, tmp_path) == pytest.approx(200.0)
 
 
 def test_an_axis_also_drawn_as_a_plain_line_does_not_break_the_outline(tmp_path):
@@ -452,7 +460,7 @@ def test_an_axis_also_drawn_as_a_plain_line_does_not_break_the_outline(tmp_path)
     _tube_and_axis(msp)
     msp.add_line((-4, 0), (24, 0))
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(60.0)
+    assert area_of(doc, tmp_path) == pytest.approx(60.0)
 
 
 def test_a_line_drawn_twice_does_not_become_the_part(tmp_path):
@@ -468,7 +476,7 @@ def test_a_line_drawn_twice_does_not_become_the_part(tmp_path):
     msp.add_line((10, 0), (10, 5))
     msp.add_line((10, 0), (10, 5))
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(60.0)
+    assert area_of(doc, tmp_path) == pytest.approx(60.0)
 
 
 def test_an_axis_edge_and_a_drawn_axis_meeting_at_a_corner(tmp_path):
@@ -490,7 +498,7 @@ def test_an_axis_edge_and_a_drawn_axis_meeting_at_a_corner(tmp_path):
     msp.add_line((0, 0), (29, 0))  # the axis again, as ordinary geometry
     msp.add_line((-4, 0), (29, 0), dxfattribs={"layer": "CENTER"})
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(200.0)
+    assert area_of(doc, tmp_path) == pytest.approx(200.0)
 
 
 def test_a_hairline_gap_still_closes(tmp_path):
@@ -512,6 +520,4 @@ def test_a_hairline_gap_still_closes(tmp_path):
         msp.add_line(a, b)
     msp.add_line((-4, 0), (29, 0), dxfattribs={"layer": "CENTER"})
 
-    assert drawing._area(read(_saved(doc, tmp_path)).curves) == pytest.approx(
-        200.0, rel=1e-4
-    )
+    assert area_of(doc, tmp_path) == pytest.approx(200.0, rel=1e-4)

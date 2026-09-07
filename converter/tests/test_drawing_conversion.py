@@ -73,6 +73,16 @@ def test_it_is_labelled_derived_and_says_what_it_assumed(stepped):
     assert "centre line" in said
     assert "bored" in said
 
+    # What was on the sheet and is not in the part, kept apart from what the
+    # reading decided. They answer different questions and are shown as two
+    # lists, so a tally of skipped dimensions does not read as an assumption.
+    assert set(derived["ignored"]) == {
+        "1 DIMENSION",
+        "1 TEXT",
+        "1 other closed outline on the sheet",
+    }
+    assert not any("DIMENSION" in note for note in derived["assumptions"])
+
 
 def test_the_face_groups_tile_the_triangles(stepped):
     """The invariant the viewer's face picking rests on, checked here too."""

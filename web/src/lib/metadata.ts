@@ -59,11 +59,32 @@ export interface SnapGeometry {
  * `brep` carries exact mass properties, face groups and snap targets. `mesh`
  * carries measured properties and no snap data — a triangle corner is a
  * tessellation artefact, not a design intent.
+ *
+ * `derived` is a B-rep and measures like one, but it was worked out from a
+ * drawing rather than read from a solid. Its numbers are exact readings of a
+ * shape somebody's reading of a drawing produced, which is a different claim,
+ * and `derived` below is what it rests on.
  */
-export type GeometrySource = 'brep' | 'mesh';
+export type GeometrySource = 'brep' | 'mesh' | 'derived';
+
+/** How a model was worked out from a drawing. Present only for `derived`. */
+export interface DerivedGeometry {
+  method: 'dxf-revolve';
+  axis_point: Vec3;
+  axis_direction: Vec3;
+  /** What the reading decided. Plain sentences, written to be shown. */
+  assumptions: string[];
+  /**
+   * What was on the sheet and is not in the part. A different question from
+   * what was assumed, and the first place to look when the shape is wrong.
+   */
+  ignored: string[];
+}
 
 export interface ModelMetadata {
   geometry_source: GeometrySource;
+  /** Absent on anything read from a real solid, where nothing was assumed. */
+  derived?: DerivedGeometry | null;
   tree: TreeNode[];
   parts: Record<string, PartMetadata>;
   units: string;

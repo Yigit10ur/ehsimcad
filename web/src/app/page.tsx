@@ -7,6 +7,7 @@ import { UploadForm } from '@/components/catalogue/UploadForm';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { VerifyBanner } from '@/components/auth/VerifyBanner';
 import { db, schema } from '@/db';
+import { SUPPORTED_FORMAT_NAMES } from '@/lib/formats';
 import { deletableIds } from '@/lib/models';
 import { projectsFor } from '@/lib/projects';
 import {
@@ -165,7 +166,7 @@ export default async function Home() {
               {models.length === 0
                 ? 'Nothing uploaded yet'
                 : `${models.length} model${models.length === 1 ? '' : 's'}`}
-              <span className="text-slate-400"> · STEP, IGES, STL, OBJ, PLY, glTF</span>
+              <span className="text-slate-400"> · {SUPPORTED_FORMAT_NAMES.join(', ')}</span>
             </p>
           </div>
 

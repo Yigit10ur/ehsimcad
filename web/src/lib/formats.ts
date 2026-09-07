@@ -11,22 +11,36 @@
  * than it is for a drawing.
  */
 
-export const SUPPORTED_EXTENSIONS = [
-  '.step',
-  '.stp',
-  '.iges',
-  '.igs',
-  '.stl',
-  '.obj',
-  '.ply',
-  '.glb',
-  '.gltf',
+/**
+ * What is accepted, by the name a person would use for it.
+ *
+ * The catalogue names the formats and the rejection lists the extensions, and
+ * they used to be two lists: one was updated for DXF and the other was not, so
+ * the page said one thing and the error said another. Both are read from here
+ * now, which makes them impossible to disagree rather than merely tested.
+ */
+export const SUPPORTED_FORMATS = [
+  { name: 'STEP', extensions: ['.step', '.stp'] },
+  { name: 'IGES', extensions: ['.iges', '.igs'] },
+  { name: 'STL', extensions: ['.stl'] },
+  { name: 'OBJ', extensions: ['.obj'] },
+  { name: 'PLY', extensions: ['.ply'] },
+  { name: 'glTF', extensions: ['.glb', '.gltf'] },
   // A drawing rather than a model, and read as one: a turned part is
   // reconstructed from its profile and centre line, and labelled `derived` so
   // that nothing it produces is taken for a part somebody modelled. See
   // ARCHITECTURE.md section 12.
-  '.dxf',
+  { name: 'DXF', extensions: ['.dxf'] },
 ] as const;
+
+export const SUPPORTED_EXTENSIONS: readonly string[] = SUPPORTED_FORMATS.flatMap(
+  (format) => format.extensions,
+);
+
+/** For the line under the catalogue heading. */
+export const SUPPORTED_FORMAT_NAMES: readonly string[] = SUPPORTED_FORMATS.map(
+  (format) => format.name,
+);
 
 type NativeKind = 'part' | 'assembly' | 'drawing';
 
@@ -80,6 +94,13 @@ const NATIVE_FORMATS: Record<string, NativeFormat> = {
  */
 const DRAWING_EXCHANGE = ['.dwg'];
 
+/**
+ * Scans and screenshots. Worth naming rather than falling through to the list
+ * of supported extensions, because somebody holding one of these is holding a
+ * drawing and has somewhere useful to go.
+ */
+const PICTURES = ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.gif', '.webp', '.heic'];
+
 export function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf('.');
   return dot === -1 ? '' : filename.slice(dot).toLowerCase();
@@ -111,12 +132,22 @@ function nativeMessage(extension: string, format: NativeFormat): string {
 export function rejectionReason(filename: string): string | null {
   const extension = extensionOf(filename);
 
-  if (SUPPORTED_EXTENSIONS.includes(extension as (typeof SUPPORTED_EXTENSIONS)[number])) {
-    return null;
-  }
+  if (SUPPORTED_EXTENSIONS.includes(extension)) return null;
 
   const native = NATIVE_FORMATS[extension];
   if (native) return nativeMessage(extension, native);
+
+  if (PICTURES.includes(extension)) {
+    // The likeliest thing anybody holding a drawing tries first, and the one
+    // rejection where listing nine extensions helps least. A picture of a
+    // drawing carries no geometry at all: every line in it is a row of dark
+    // pixels, and a dimension is a row of dark pixels too.
+    return `${extension} is a picture of a drawing, not a drawing. Nothing in it can be measured. Save the same drawing as DXF and upload that.`;
+  }
+
+  if (extension === '.pdf') {
+    return `${extension} is not read. The application that made it can save the same drawing as DXF — upload that instead.`;
+  }
 
   if (DRAWING_EXCHANGE.includes(extension)) {
     return `${extension} needs a licensed library to read. Save the same drawing as DXF, which every application that writes ${extension} can also write.`;

@@ -10,7 +10,43 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { extensionOf, formatOf, rejectionReason } from '@/lib/formats';
+import {
+  SUPPORTED_EXTENSIONS,
+  SUPPORTED_FORMAT_NAMES,
+  extensionOf,
+  formatOf,
+  rejectionReason,
+} from '@/lib/formats';
+
+describe('what the catalogue says it accepts', () => {
+  /*
+   * The page named the formats and the rejection listed the extensions, and
+   * for a while they disagreed: DXF was accepted, and the line under the
+   * heading still said STEP, IGES, STL, OBJ, PLY, glTF. Both are read from one
+   * list now, and these are what say so.
+   */
+  it('names every format that is actually accepted', () => {
+    expect(SUPPORTED_FORMAT_NAMES).toContain('DXF');
+    expect(SUPPORTED_FORMAT_NAMES.length).toBeGreaterThan(0);
+  });
+
+  it('accepts every extension the names stand for', () => {
+    for (const extension of SUPPORTED_EXTENSIONS) {
+      expect(rejectionReason(`part${extension}`)).toBeNull();
+    }
+  });
+
+  it('names nothing it does not accept', () => {
+    // A name with no extension behind it is a promise the upload breaks.
+    for (const name of SUPPORTED_FORMAT_NAMES) {
+      expect(
+        SUPPORTED_EXTENSIONS.some((extension) =>
+          extension.slice(1).startsWith(name.toLowerCase().slice(0, 3)),
+        ),
+      ).toBe(true);
+    }
+  });
+});
 
 describe('rejectionReason', () => {
   it.each(['bracket.step', 'bracket.STEP', 'bracket.stp', 'shaft.iges', 'shaft.igs'])(
@@ -79,6 +115,27 @@ describe('rejectionReason', () => {
     });
   });
 
+  describe('pictures of drawings', () => {
+    it.each(['scan.jpeg', 'scan.jpg', 'sheet.png', 'sheet.tif', 'photo.heic'])(
+      'sends the holder of %s to DXF rather than listing nine extensions',
+      (filename) => {
+        const reason = rejectionReason(filename) ?? '';
+
+        expect(reason).toContain('DXF');
+        expect(reason).toContain('measured');
+        // The generic list helps least here: somebody holding a scan of a
+        // drawing has somewhere useful to go, and it is not ".stl".
+        expect(reason).not.toContain('.stl');
+      },
+    );
+
+    it('sends the holder of a PDF to DXF as well', () => {
+      const reason = rejectionReason('sheet.pdf') ?? '';
+      expect(reason).toContain('DXF');
+      expect(reason).not.toContain('.stl');
+    });
+  });
+
   it('gets the article right for each application name', () => {
     expect(rejectionReason('bracket.ipt')).toContain('an Inventor');
     expect(rejectionReason('bracket.sldprt')).toContain('a SolidWorks');
@@ -93,9 +150,12 @@ describe('rejectionReason', () => {
   });
 
   it('turns away an unrelated file and lists what would work', () => {
-    const reason = rejectionReason('notes.pdf') ?? '';
-    expect(reason).toContain('.pdf');
+    // Something with nowhere better to be sent, which a PDF and a scan now
+    // have: for those the list of nine extensions is the least useful answer.
+    const reason = rejectionReason('notes.zip') ?? '';
+    expect(reason).toContain('.zip');
     expect(reason).toContain('.step');
+    expect(reason).toContain('.dxf');
   });
 
   it('turns away a file with no extension at all', () => {

@@ -376,12 +376,27 @@ Only one shape of guess is made, because only one is narrow enough to be
 worth making: a turned part is a profile revolved about an axis, and the
 drawing shows both.
 
+Two files are read this way. A **DXF** says what each mark is, so the filters
+are by entity type. A **PDF** -- the same drawing after it was printed -- says
+only how each mark was drawn, so the filters are by how: every glyph and every
+arrowhead is filled and never stroked, which separates the annotation from the
+part in one test, and a dashed line arrives as a pattern on a stroke or as a
+row of short strokes, which is how the centre line is found again. Both end at
+the same place, and from there on nothing knows which it was.
+
 | Step | What is done | What is refused |
 |---|---|---|
-| Annotation | Dimensions, notes, hatching, leaders and blocks are dropped by DXF entity type, along with anything on a switched-off, frozen or non-plotting layer | — |
+| Annotation | Dimensions, notes, hatching, leaders and blocks are dropped by DXF entity type, along with anything on a switched-off, frozen or non-plotting layer. In a PDF, everything filled rather than stroked | — |
 | Axis | The longest line whose linetype resolves to CENTER, or whose layer is named CENTER / CENTRE / AXIS / EKSEN | A drawing with no centre line. Nothing infers one |
 | Profile | Closed outlines are assembled on both sides of the axis, cut where they cross it; the one lying against the axis wins | An outline that does not close, or three ends meeting at one point |
 | Solid | `BRepPrimAPI_MakeRevol`, a full turn | An arc drawn across the centre line; a revolve that does not validate |
+| Size (PDF only) | The part's length along its axis, when it is known. Otherwise the sheet is taken to have been printed full size, and the assumption is stated with the length it implies | — |
+
+A PDF cannot draw a circle: an arc leaves the CAD application as an arc and
+arrives as two or three cubics. Each is fitted back to the circle it came from
+-- checked against every sample, because a straight run fits a circle of
+enormous radius perfectly well -- and the pieces are rejoined, so a fillet is
+one face to click on rather than three.
 
 Why the axis is never inferred: it fixes every diameter in the part. An axis
 guessed wrongly does not produce an obviously broken model, it produces a
@@ -401,6 +416,8 @@ sheet and is not in the part, and it is the first place to look when the shape
 is wrong: a drawing whose outline arrived as splines says so there and nowhere
 else. Both are shown in the viewer's properties panel, above any number.
 
-DXF rather than an image: in DXF the annotation is a separate entity type, so
-telling the part from the sheet is a filter rather than a computer vision
-problem. Nothing here reads pixels.
+DXF or PDF rather than an image: in both, the annotation is separable by
+something the file states, so telling the part from the sheet is a filter
+rather than a computer vision problem. And the geometry is geometry -- a line
+is a line with coordinates, not a row of dark pixels. Nothing here reads
+pixels.

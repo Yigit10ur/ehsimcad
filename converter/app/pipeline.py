@@ -12,7 +12,11 @@ MESH_FORMATS = {".stl", ".obj", ".ply"}
 # A drawing is not a model, and what comes out of one is a reading of it. It is
 # converted all the same, and labelled `derived` so that nothing downstream can
 # mistake it for a part somebody actually modelled.
-DRAWING_FORMATS = {".dxf"}
+#
+# A PDF is the same drawing after it has been printed. It keeps the geometry --
+# a line is still a line, with coordinates -- and loses only the names for
+# things, which is why it has a reader of its own.
+DRAWING_FORMATS = {".dxf", ".pdf"}
 SUPPORTED_FORMATS = BREP_FORMATS | MESH_FORMATS | DRAWING_FORMATS | {".glb", ".gltf"}
 
 
@@ -49,6 +53,11 @@ def convert(source: Path, out_glb: Path) -> ConversionResult:
                 "OCCT bindings are not installed; "
                 'run: pip install -e ".[cad]" or use the Docker image'
             )
+        if suffix == ".pdf":
+            from app.cad import pdf
+
+            return pdf.convert(source, out_glb)
+
         if suffix in DRAWING_FORMATS:
             from app.cad import drawing
 

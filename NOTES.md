@@ -32,7 +32,7 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-386 tests pass: 308 in `web` (vitest, against an in-process Postgres), 78 in
+416 tests pass: 308 in `web` (vitest, against an in-process Postgres), 108 in
 `converter` (pytest; the geometry ones skip where OCCT is not installed, which
 is CI -- the drawing reader does not, because deciding what a drawing means is
 where being wrong is invisible).
@@ -227,6 +227,33 @@ the panel and in the toolbar, above any number.
 Only that one shape of guess is made. Relating two views to each other -- a
 pocket, a step milled from the side, a cross hole -- is a different problem and
 is refused rather than attempted.
+
+**A printed sheet is read too, and by the same second half.** A PDF of the
+same drawing gives the same solid: 37,196.46 mm3 either way, to the eighth
+decimal place. The two readers share nothing but the answer -- one reads entity
+types, layers and linetypes; the other reads stroked paths and works out the
+rest -- which makes them each other's check.
+
+What a PDF states is *how* a mark was drawn rather than *what* it is, so the
+filters change shape. Every glyph and every arrowhead is filled and never
+stroked, which separates the annotation from the part in one test. A dashed
+line arrives either as a pattern on a stroke or as a row of short strokes,
+depending on what wrote the file, and both are read: the centre line is the one
+whose marks alternate two lengths.
+
+**A PDF cannot draw a circle.** An arc leaves the CAD application as an arc and
+arrives as two or three cubics. Each is fitted back -- checked against every
+sample, because a straight run fits a circle of enormous radius perfectly well
+-- and the pieces rejoined, so a fillet is one face to click on rather than
+three. The circle that gets built passes exactly through the arc's own ends: a
+fitted one passes near them, and near is not a thing OCCT will build an edge
+from.
+
+**Size is the one thing a sheet is vaguer about than a DXF.** A print carries
+the part at whatever scale it was plotted, and nothing in the file says which.
+One known length settles it; without one the sheet is taken as printed full
+size and the assumption is stated with the length it implies, which is how
+somebody who knows the part sees it is wrong.
 
 **The axis is never inferred, and that is the decision to keep.** It fixes
 every diameter in the part, so an axis guessed wrongly does not produce an
@@ -474,6 +501,7 @@ with GitHub breaks the moment the domain moves without it.
 |---|---|
 | `app/cad/occt.py` | The B-rep pipeline: reads STEP/IGES, walks the XCAF tree, tessellates, extracts face groups, edges and snap geometry. Uses `AddOptimal_s` with a zero gap for bounding boxes -- the default inflates them. |
 | `app/cad/mesh.py` | The mesh path. Measured properties, null volume when not watertight, sharp edges by dihedral angle, no snap data. |
+| `app/cad/pdf.py` | The same, out of a printed sheet: stroked paths rather than entity types, dashed strokes rejoined into centre lines, cubics fitted back to the arcs they were. Hands over to `drawing.py` the moment it has curves. |
 | `app/cad/drawing.py` | Reading a turned part out of a DXF: filter the annotation, find the centre line, assemble the closed outline beside it, revolve. All 2D and pure Python except the revolve, so the part that can be wrong unnoticed is tested in CI. |
 | `app/models.py` | The contract between converter and viewer: tree, per-part properties, face groups, snap geometry, `geometry_source`, `declared_name`, and for a derived model what was assumed and what was left out. |
 | `app/pipeline.py` | Format dispatch and the deflection rule, which scales with the bounding box. |
@@ -481,7 +509,7 @@ with GitHub breaks the moment the domain moves without it.
 | `app/storage.py` | S3-compatible download and upload. |
 | `app/config.py` | Settings, deliberately sharing the web application's variable names. |
 | `app/cli.py`, `app/main.py` | A one-shot convert command, and a health endpoint. |
-| `scripts/make_fixture.py` | Generates every test fixture, including two DXF drawings written the way an office draws them -- mirrored about the centre line, bore dashed, dimensions and a title block on top. |
+| `scripts/make_fixture.py` | Generates every test fixture, including two DXF drawings written the way an office draws them -- mirrored about the centre line, bore dashed, dimensions and a title block on top -- and three PDFs: two prints of the same shaft dashed the two ways a PDF can be, and one with a fillet. |
 | `scripts/make_large_assembly.py` | Generates an assembly of N parts, repeated or distinct, for scale measurement. |
 | `tests/` | Geometry against analytically known values; the naming rule; the mesh path's honesty about what it cannot measure. |
 

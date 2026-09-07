@@ -93,7 +93,7 @@ class DerivedGeometry(BaseModel):
     the right model, and that is not something a number can carry.
     """
 
-    method: Literal["dxf-revolve"]
+    method: Literal["dxf-revolve", "pdf-revolve"]
     axis_point: Vec3
     axis_direction: Vec3
     # What the reading decided. Plain sentences, meant to be shown to whoever

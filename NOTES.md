@@ -5,8 +5,8 @@ to be picked up cold: the decisions below are the ones that would otherwise
 have to be re-derived from the code, and the measurements are the ones nobody
 should have to take twice.
 
-Started 2026-08-24. This snapshot: 2026-09-07, describing `main` through
-`8aff4bc`.
+Started 2026-08-24. This snapshot: 2026-09-08, describing `main` through
+`fadaeb9`.
 
 (A commit, and "through" rather than "at". It was a count twice and wrong both
 times, because the merge that lands an update to this file is itself counted --
@@ -21,10 +21,11 @@ Live at <https://ehsimcad.vercel.app>. Web on Vercel
 (`fra1`), Postgres and object storage on Supabase (Frankfurt), conversion on
 GitHub Actions. Nothing runs between uploads, so nothing is billed.
 
-It also runs on a server of your own, which is where it is going: two
-containers, `compose.yaml`, and INSTALL.md written for whoever installs it.
-Both images have been built and run, and the worker converted a real file in
-one. The two arrangements are the same worker against the same queue -- the
+It also runs on a server of your own, which is where it is going: `compose.yaml`
+(released as **v1**) and INSTALL.md written for whoever installs it. That stack
+needs nothing to exist first -- it brings its own Postgres and its own MinIO --
+and it has been run from an empty slate, and from an empty image store with no
+network. The two arrangements are the same worker against the same queue -- the
 queue does not care where its workers live, which is the whole reason moving
 was a change to one file.
 
@@ -352,14 +353,39 @@ images, npm, PyPI for OpenCascade, and a Debian mirror. So every service in
 `compose.yaml` names the image it wants. Compose builds a service only when its
 image is absent, which is what turns `docker load` into a complete substitute
 for the build -- the four install steps then run offline, unchanged.
-`deploy/pack-images.sh` builds the three images for a named architecture and
-saves them into one file of about 1.1 GB. It refuses to pack images whose
+`deploy/pack-images.sh` builds the three application images for a named
+architecture, pulls the three it does not build -- Postgres, MinIO and `mc` --
+and saves all six into one file of about 1.3 GB. It refuses to pack images whose
 architecture is not the one asked for, which is the failure worth catching:
 the wrong architecture loads without a word and every container then dies at
 `exec format error`. The running application never wanted the internet anyway
 -- fonts are downloaded at build time and served from the image, and GitHub
 sign-in, email delivery and the Actions dispatch are each off when their
 settings are empty.
+
+**One store, two addresses.** Browsers upload straight to object storage, so
+the address in a presigned URL has to be one a browser can open -- and with the
+store in the same Compose project, that is not the address the containers use.
+`minio:9000` resolves on the container network and nowhere else. The host is
+part of what SigV4 signs, so this cannot be repaired by rewriting the URL after
+the fact: the signature stops matching. Hence `STORAGE_PUBLIC_ENDPOINT`, used
+for signing only. Signing is arithmetic, not a request, so the signing client
+is free to name an address the process itself could never reach; every actual
+request the web application makes -- deletes, and preflight's write-read-delete
+-- still goes over `STORAGE_ENDPOINT`. The worker needs only the internal one:
+it never signs anything for anybody. `preflight` fails outright when browsers
+would be handed a single-label name like `minio`, because that is the shape of
+the mistake that passes every check on the server and fails every upload on
+every desktop.
+
+**`required: false` does not leave a dependency out.** It was in `compose.yaml`
+for one commit, on the theory that it would let `docker compose up -d web
+worker` skip the bundled Postgres. It does not: Compose starts a named
+service's dependencies regardless, and `required: false` only relaxes the wait.
+`--no-deps` is the flag that actually does it. Found by running the documented
+command and watching `postgres` start anyway -- which is the argument for
+testing the sentence you are about to write into an install guide, not just the
+code it describes.
 
 **Migrations are run by hand, before the merge that needs them.** A schema
 change that runs automatically is a schema change nobody read.
@@ -655,7 +681,7 @@ verify, and the bundled sample that needs no database.
 | `DEPLOY.md` | The runbook: separate production database, environment variables, where the converter runs, and the mail provider. |
 | `CONTRIBUTING.md` | Working conventions and the branching model. |
 | `INSTALL.md` | Installing it on a server of your own, written for whoever does that and not for anyone who has seen this code. In English, with a Turkish summary. |
-| `compose.yaml` | The two services, plus `migrate` and `preflight` as one-shot commands. Every service names its image, which is what lets a loaded image stand in for a build. |
+| `compose.yaml` | The v1 stack: web, worker, and the Postgres and MinIO they share, plus `migrate` and `preflight` as one-shot commands. Every service names its image, which is what lets a loaded image stand in for a build. |
 | `deploy/pack-images.sh` | Builds the images for a named architecture on a machine with the internet and saves them as one file, for a server that has none. |
 | `deploy/systemd/` | A unit for each process, for an install without containers. Written from the install steps; not run. |
 | `.github/workflows/ci.yml` | Lint, typecheck, test, build on every pull request. |

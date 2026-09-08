@@ -1,28 +1,41 @@
-# The application on a server of your own.
+# EhsimCAD v1, on a server of your own.
 #
-# Two long-running processes and nothing else: the web application, and a
-# worker that converts uploads. Postgres and object storage are yours to
-# provide -- put their details in `.env.deploy` next to this file.
+# Everything the application needs is here: the site, the converter, a Postgres
+# and an S3-compatible store. Nothing outside this file has to exist first.
 #
-#   cp .env.deploy.example .env.deploy   and fill it in
+#   cp .env.deploy.example .env.deploy   and set AUTH_SECRET
+#   docker compose run --rm preflight    must say Ready
 #   docker compose run --rm migrate      once, and after any upgrade
 #   docker compose up -d
 #
-# Check it before trusting it:
-#   docker compose run --rm preflight
-#
 # On a machine with no way out to the internet, load the images first:
 #
-#   docker load -i ehsimcad-images-linux-amd64.tar.gz
+#   docker load -i ehsimcad_v1-images-linux-amd64.tar.gz
 #
-# and the commands above run unchanged. Every service names the image it
-# wants, so Compose builds only when that image is not already there -- which
-# is what makes a loaded image enough. `deploy/pack-images.sh` is what builds
-# the archive, on a machine that does have the internet.
+# and the commands above run unchanged. Every service names the image it wants,
+# so Compose builds only when that image is not already there -- which is what
+# makes a loaded image enough. `deploy/pack-images.sh` builds the archive, on a
+# machine that does have the internet.
+#
+# Already have a Postgres and a bucket? Point `.env.deploy` at them and add
+# `--no-deps`, which is what leaves the bundled pair out:
+#
+#   docker compose run --rm --no-deps preflight
+#   docker compose run --rm --no-deps migrate
+#   docker compose up -d --no-deps web worker
+#
+# Naming the services alone is not enough: Compose starts a named service's
+# dependencies too, so `up -d web worker` would bring up the very Postgres you
+# are trying to replace.
+
+# What the containers, the network and the volumes are called. `docker ps`
+# shows ehsimcad_v1-web-1, and a second version alongside this one does not
+# collide with it.
+name: ehsimcad_v1
 
 services:
   web:
-    image: ehsimcad-web:0.1.0
+    image: ehsimcad-web:v1
     build:
       context: ./web
     env_file: .env.deploy
@@ -30,6 +43,11 @@ services:
       # Change the left-hand number to move it; put a reverse proxy in front
       # for TLS, which this does not terminate.
       - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # The converter. No ports: it reaches out to the database and to storage and
@@ -39,16 +57,106 @@ services:
   # take different jobs rather than the same one. One is enough until uploads
   # start queueing behind each other.
   worker:
-    image: ehsimcad-worker:0.1.0
+    image: ehsimcad-worker:v1
     build:
       context: ./converter
     env_file: .env.deploy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
     restart: unless-stopped
 
-  # Bring the schema up. Runs to completion and exits, so it is `run`, not
-  # `up`: `docker compose run --rm migrate`.
+  # ------------------------------------------------------------ the bundled
+  # infrastructure. Replaceable: both speak standard protocols, so pointing
+  # `.env.deploy` at the company Postgres and the company bucket is a change of
+  # configuration, not of this file.
+
+  postgres:
+    image: postgres:16.15-alpine
+    # Deliberately not published. Nothing outside this network needs to reach
+    # the database, and the moment a port is open the password below stops
+    # being a formality. To look inside it during an install, use the client
+    # that is already in the image:
+    #   docker compose exec postgres psql -U ehsimcad ehsimcad
+    environment:
+      POSTGRES_USER: ehsimcad
+      POSTGRES_DB: ehsimcad
+      # Override it in the environment if you would rather, but then change
+      # DATABASE_URL in `.env.deploy` to match -- they are the same password
+      # written twice, and Compose cannot write one from the other.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ehsimcad}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `web` and `worker` wait for this. Postgres starts, stops and starts
+      # again while it initialises the data directory on first run, so a
+      # container that is merely up is not yet a database that answers.
+      test: ["CMD-SHELL", "pg_isready -U ehsimcad -d ehsimcad"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-ehsimcad}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:-ehsimcad-storage}
+      # The browser sends OPTIONS before it PUTs a file, and a bucket that
+      # refuses it fails every upload while the server looks perfectly healthy.
+      # Presigned URLs are what authorise these requests -- an origin is not a
+      # credential -- so this is not the control that keeps the bucket private.
+      # Narrow it to SITE_URL if you would rather; it is one value.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${STORAGE_CORS_ORIGIN:-*}
+    ports:
+      # Published because the browser uploads here directly, not through the
+      # application. This is the address STORAGE_PUBLIC_ENDPOINT names, and it
+      # has to work from users' desktops -- see INSTALL.md.
+      - "9000:9000"
+      # The administrative console. Nothing needs it; it is here because an
+      # install that goes wrong is much easier to look at than to guess about.
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+
+  # Creates the bucket, then exits. `web` and `worker` wait for it to succeed,
+  # so neither starts against a bucket that is not there yet.
+  #
+  # It polls rather than depending on a healthcheck: the MinIO image carries no
+  # shell tools to write one with, and `mc` in here can simply keep asking.
+  minio-setup:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-ehsimcad}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:-ehsimcad-storage}
+      BUCKET: ${STORAGE_BUCKET:-cad-models}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 60); do
+          mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && break
+          sleep 1
+        done
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null || {
+          echo "minio did not answer within 60s" >&2; exit 1; }
+        mc mb --ignore-existing "local/$$BUCKET"
+        echo "bucket ready: $$BUCKET"
+    restart: "no"
+
+  # ------------------------------------------------------------------ tools
+  # Both run to completion and exit, so they are `run`, not `up`. They are in a
+  # profile so that `up` does not start them as services.
+
+  # Bring the schema up: `docker compose run --rm migrate`.
   migrate:
-    image: ehsimcad-tools:0.1.0
+    image: ehsimcad-tools:v1
     build:
       context: ./web
       # Not the image that serves the site: that one carries only what the
@@ -57,16 +165,31 @@ services:
       target: tools
     env_file: .env.deploy
     command: ["npx", "drizzle-kit", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     profiles: ["tools"]
 
   # Reports what is missing or unreachable before anything tries to serve.
   preflight:
     # The same image as `migrate`, named the same, so it is built once and
     # travels once.
-    image: ehsimcad-tools:0.1.0
+    image: ehsimcad-tools:v1
     build:
       context: ./web
       target: tools
     env_file: .env.deploy
     command: ["node", "scripts/preflight.mjs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-setup:
+        condition: service_completed_successfully
     profiles: ["tools"]
+
+volumes:
+  # Named, so `docker compose down` leaves the data and only `down -v` removes
+  # it. Back up both together: either one alone restores to a catalogue whose
+  # files are missing, or files nothing points at.
+  postgres-data:
+  minio-data:

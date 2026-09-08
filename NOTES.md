@@ -378,6 +378,22 @@ would be handed a single-label name like `minio`, because that is the shape of
 the mistake that passes every check on the server and fails every upload on
 every desktop.
 
+**The personal project is created by whichever request gets there first.**
+Every signed-in page asks for it before anything else and five places ask, so
+on a first sign-in several requests all find it missing and all try to create
+it. The unique index on (owner_id, slug) lets one through. Unhandled, the
+losers reported a failed insert -- and because the catalogue shows "Not
+configured yet" whenever a query it depends on throws, a working install looked
+like an unconfigured one. The row had been created correctly the whole time.
+Fixed with `onConflictDoNothing` and a re-read of the winner's row. The insert
+directly below it, into `project_members`, already had exactly that guard: the
+concern had been thought about once and missed one line up.
+
+The lesson is about the error screen rather than the race. "Not configured yet"
+is the right message for a database that was never set up and the wrong one for
+a single failed query, and it cost an install being called broken. A message
+that names a cause should be shown only when that cause has been established.
+
 **`docker image inspect` answers about this machine, not about the image.**
 `pack-images.sh` refused to pack a correct `linux/amd64` archive, saying
 `minio/mc ... is arm64`. It was not: the image carried both, and so did

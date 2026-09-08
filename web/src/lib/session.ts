@@ -69,16 +69,42 @@ export async function emailVerified(userId: string): Promise<boolean> {
 }
 
 export async function personalProject(userId: string): Promise<string> {
-  const existing = await db.query.projects.findFirst({
-    where: and(eq(schema.projects.ownerId, userId), eq(schema.projects.slug, 'personal')),
-  });
+  const mine = and(
+    eq(schema.projects.ownerId, userId),
+    eq(schema.projects.slug, 'personal'),
+  );
 
+  const existing = await db.query.projects.findFirst({ where: mine });
   if (existing) return existing.id;
 
-  const [project] = await db
+  /*
+   * Several requests arrive here at once, exactly once per account.
+   *
+   * Every signed-in page asks for this project before it does anything else,
+   * and there are five places that ask -- so a page render and the API call it
+   * makes both get past the check above on a first sign-in, because neither
+   * has created it yet. The unique index on (owner_id, slug) then lets one
+   * insert through and rejects the rest.
+   *
+   * Unhandled, that surfaced as "Not configured yet" with a failed insert
+   * printed underneath, which reads as a broken installation. It was not: the
+   * project had been created perfectly well by whichever request won.
+   */
+  const [created] = await db
     .insert(schema.projects)
     .values({ ownerId: userId, name: 'My Models', slug: 'personal' })
+    .onConflictDoNothing()
     .returning();
+
+  // Nothing returned means the row was already there -- someone else's request
+  // created it between our select and our insert. Theirs is as good as ours.
+  const project = created ?? (await db.query.projects.findFirst({ where: mine }));
+
+  if (!project) {
+    // Neither inserted nor found: the row was refused for a reason that is not
+    // the conflict, and saying so beats returning an id that does not exist.
+    throw new Error('the personal project could not be created');
+  }
 
   await db
     .insert(schema.projectMembers)

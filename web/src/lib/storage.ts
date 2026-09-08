@@ -22,23 +22,45 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from './env';
 
 let client: S3Client | null = null;
+let presigner: S3Client | null = null;
 
-function s3() {
-  if (client) return client;
-
+function build(endpoint: string) {
   const config = env();
-  client = new S3Client({
-    endpoint: config.STORAGE_ENDPOINT,
+  return new S3Client({
+    endpoint,
     region: config.STORAGE_REGION,
-    // Required by R2 and Supabase: they address buckets by path, not by
-    // subdomain.
+    // Required by MinIO, R2 and Supabase alike: they address buckets by path,
+    // not by subdomain.
     forcePathStyle: true,
     credentials: {
       accessKeyId: config.STORAGE_ACCESS_KEY_ID,
       secretAccessKey: config.STORAGE_SECRET_ACCESS_KEY,
     },
   });
+}
+
+/** For requests this process makes itself. */
+function s3() {
+  if (!client) client = build(env().STORAGE_ENDPOINT);
   return client;
+}
+
+/**
+ * For URLs handed to a browser.
+ *
+ * Signing is arithmetic, not a request: this client never opens a connection,
+ * so it is fine for it to name an address only the browser can reach. The
+ * address is signed along with everything else, which is why it has to be the
+ * right one from the start -- see STORAGE_PUBLIC_ENDPOINT in `env.ts`.
+ */
+function signer() {
+  if (!presigner) {
+    const config = env();
+    presigner = config.STORAGE_PUBLIC_ENDPOINT
+      ? build(config.STORAGE_PUBLIC_ENDPOINT)
+      : s3();
+  }
+  return presigner;
 }
 
 /**
@@ -61,7 +83,7 @@ export const storageKeys = {
 export async function presignUpload(key: string, contentType: string) {
   const config = env();
   return getSignedUrl(
-    s3(),
+    signer(),
     new PutObjectCommand({
       Bucket: config.STORAGE_BUCKET,
       Key: key,
@@ -74,7 +96,7 @@ export async function presignUpload(key: string, contentType: string) {
 export async function presignDownload(key: string) {
   const config = env();
   return getSignedUrl(
-    s3(),
+    signer(),
     new GetObjectCommand({ Bucket: config.STORAGE_BUCKET, Key: key }),
     { expiresIn: config.STORAGE_URL_TTL_SECONDS },
   );

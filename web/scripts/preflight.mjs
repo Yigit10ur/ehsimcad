@@ -68,6 +68,44 @@ if (process.env.AUTH_SECRET && process.env.AUTH_SECRET.length < 32) {
 }
 
 /*
+ * The address a browser will be given.
+ *
+ * Files are uploaded and downloaded directly by the browser, so this is the
+ * one setting that cannot be checked from here: it has to resolve on somebody
+ * else's desktop, and this process is not on one. Two shapes of it are wrong
+ * often enough to name.
+ */
+const browserFacing = process.env.STORAGE_PUBLIC_ENDPOINT || process.env.STORAGE_ENDPOINT;
+
+if (browserFacing) {
+  const host = hostOf(browserFacing).split(':')[0];
+  const local = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+  const siteHost = process.env.SITE_URL ? hostOf(process.env.SITE_URL).split(':')[0] : '';
+  const siteIsLocal = siteHost === 'localhost' || siteHost === '127.0.0.1';
+
+  if (!local && !host.includes('.') && !/^\d/.test(host)) {
+    /*
+     * A single-label name like `minio` is a Compose service, and it resolves
+     * on the container network and nowhere else. Everything here will pass and
+     * every upload will fail.
+     */
+    fail(
+      'STORAGE_PUBLIC_ENDPOINT',
+      `browsers are told to use "${host}", which is a name only this network resolves — set it to an address users' machines can open`,
+    );
+  } else if (local && !siteIsLocal) {
+    warn(
+      'STORAGE_PUBLIC_ENDPOINT',
+      `browsers are told to use "${host}" while the site is served from "${siteHost || 'elsewhere'}" — uploads will work only from the machine running Docker`,
+    );
+  } else if (process.env.STORAGE_PUBLIC_ENDPOINT) {
+    pass('STORAGE_PUBLIC_ENDPOINT', `browsers upload to ${hostOf(browserFacing)}`);
+  } else {
+    pass('STORAGE_PUBLIC_ENDPOINT', 'unset — browsers use STORAGE_ENDPOINT, one address for both');
+  }
+}
+
+/*
  * Optional, but each one silently turns something off, and the thing it turns
  * off is not obvious from the outside.
  */

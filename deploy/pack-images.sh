@@ -13,7 +13,7 @@
 #
 # It leaves one file. Carry it over, and on the server:
 #
-#   docker load -i ehsimcad-images-linux-amd64.tar.gz
+#   docker load -i ehsimcad_v1-images-linux-amd64.tar.gz
 #
 # after which the ordinary instructions in INSTALL.md run unchanged, offline.
 #
@@ -32,7 +32,7 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
 cd "$(dirname "$0")/.."
 
-ARCHIVE="$OUT_DIR/ehsimcad-images-${PLATFORM//\//-}.tar.gz"
+ARCHIVE="$OUT_DIR/ehsimcad_v1-images-${PLATFORM//\//-}.tar.gz"
 
 # The architecture the server runs, not the one this machine runs. Building for
 # the wrong one is the failure this script exists to make hard: the images load
@@ -58,6 +58,12 @@ export DOCKER_DEFAULT_PLATFORM="$PLATFORM"
 # --pull, because the point of the exercise is that the server cannot fetch a
 # base image later. Take the current one now.
 docker compose --profile tools build --pull
+
+# Postgres, MinIO and `mc` are not built here -- they are somebody else's
+# images, named by exact release in compose.yaml. They still have to be in the
+# archive: on a closed network a missing base image is as fatal as a missing
+# one of ours, and Compose would try to fetch it at `up`.
+docker compose --profile tools pull --ignore-buildable --policy always
 
 IMAGES=$(docker compose --profile tools config --images | sort -u)
 

@@ -66,4 +66,4 @@ converter/build/
 
 # The offline install archive: a gigabyte of built images, produced by
 # `deploy/pack-images.sh` and carried to the server by hand.
-ehsimcad-images-*.tar.gz
+ehsimcad*-images-*.tar.gz

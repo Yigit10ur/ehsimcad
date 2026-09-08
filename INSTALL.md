@@ -1,4 +1,4 @@
-# Installing EhsimCAD on your own server
+# Installing EhsimCAD v1 on your own server
 
 For the team doing the install. It assumes no knowledge of the application, and
 it assumes nobody from the project is in the room -- so everything needed to
@@ -6,6 +6,12 @@ finish, and to work out what went wrong, is in this file.
 
 Everything is configuration: the same build runs in every environment, and no
 secret is baked into it.
+
+**Nothing has to exist before you start.** `compose.yaml` brings its own
+Postgres and its own S3-compatible store, so the four steps below work on a
+bare machine with Docker and no accounts anywhere. If the company already runs
+a database and a bucket, [use those instead](#using-a-database-and-bucket-you-already-run)
+-- it is four lines of configuration and one different command.
 
 **Türkçe özet en altta.**
 
@@ -16,11 +22,15 @@ secret is baked into it.
 Four steps, in this order. Each one is explained further down.
 
 ```
-cp .env.deploy.example .env.deploy    # fill it in
+cp .env.deploy.example .env.deploy    # then set AUTH_SECRET in it
 docker compose run --rm preflight     # must say Ready
 docker compose run --rm migrate       # creates the tables
 docker compose up -d
 ```
+
+`AUTH_SECRET` is the only value with no sensible default —
+`openssl rand -base64 32` produces one. Everything else in the file already
+matches the bundled Postgres and MinIO.
 
 If `run` reports that the service does not exist, the Compose version is old
 enough to need the profile named: `docker compose --profile tools run --rm
@@ -42,13 +52,16 @@ the service is up looks like the application is broken.
 
 **2. The storage address has to work from users' desktops, not just from the
 server.** Browsers upload files straight to object storage, never through the
-application. An address that resolves only inside the data centre passes every
-check on the server and fails every upload on every machine. See
+application, so `STORAGE_PUBLIC_ENDPOINT` is the address *they* must be able to
+open. It ships as `http://localhost:9000`, which is correct only while you are
+at the machine running Docker — from any other desk it has to name the server.
+See
 [Read this before you configure anything](#read-this-before-you-configure-anything).
 
 **3. The bucket must allow cross-origin requests from the site's address.**
 Same reason. The browser sends `OPTIONS` before it sends the file. Allow the
-origin, the methods `GET`, `PUT`, `HEAD`, and the `content-type` header.
+origin, the methods `GET`, `PUT`, `HEAD`, and the `content-type` header. The
+bundled MinIO already does; a bucket of your own has to be told.
 
 If something goes wrong later, [When something is wrong](#when-something-is-wrong)
 lists what each symptom actually means.
@@ -57,39 +70,49 @@ lists what each symptom actually means.
 
 ## What it is
 
-Two long-running processes.
+Two long-running processes, and the two stores they share.
 
 | | What it does | Reached by |
 |---|---|---|
 | **web** | Serves the site and the API. Node, listens on 3000. | People, through your reverse proxy |
 | **worker** | Converts uploaded CAD files. Python + OpenCascade. | Nothing — it connects out |
+| **postgres** | The catalogue and the job queue. | web and worker only; no port is published |
+| **minio** | The files themselves, over the S3 API. Listens on 9000. | web, worker, **and every user's browser** |
 
-They share a Postgres database and one object-storage bucket, and never speak
-to each other directly. An upload becomes a row in a queue table; the worker
-picks it up. Stopping the worker does not stop the site — uploads simply wait.
+`web` and `worker` never speak to each other directly. An upload becomes a row
+in a queue table; the worker picks it up. Stopping the worker does not stop the
+site — uploads simply wait.
+
+`postgres` and `minio` are ordinary, replaceable pieces: both speak standard
+protocols, and swapping either for one the company already runs is a change to
+`.env.deploy`, not to any code. They are bundled because an install that needs
+nothing else is an install that can be done in one sitting on a closed
+network.
 
 ---
 
 ## What you need to provide
 
-**Postgres 14 or newer.** One database and a user that owns it. The
-application creates its own tables.
+**Docker, and a host with 2–3 GB of RAM.** That is the whole list. Postgres and
+the object store come with it.
 
-**S3-compatible object storage.** One bucket and one key pair that can read,
-write and delete in it. MinIO, Ceph, StorageGRID and AWS S3 all work. A model
-costs the uploaded file plus about 4–6 MB derived from it, kept per revision,
-and nothing is removed unless somebody deletes a model.
+**Disk.** A model costs the uploaded file plus about 4–6 MB derived from it,
+kept per revision, and nothing is removed unless somebody deletes a model. Both
+stores live in named Docker volumes, so `docker compose down` leaves them alone
+and only `docker compose down -v` destroys them.
 
-**A host with 2 GB of RAM**, which is comfortable for both processes together.
+**A reverse proxy** for TLS, in front of port 3000. It does not terminate TLS
+itself. It does not need a large body limit — see
+[Read this before you configure anything](#read-this-before-you-configure-anything)
+for why.
+
+**2 GB of RAM** is comfortable for both application processes together.
 Measured: the worker peaked at 435 MB converting a 500-part assembly and
 344 MB converting a three-part one. Almost all of that is OpenCascade itself
 being loaded — the part that grows with the model is smaller than the fixed
 cost, so a bigger assembly does not need a bigger machine nearly as fast as you
 would expect. Conversion is single-threaded and takes seconds; the same
 500-part assembly took 5.5 s.
-
-**A reverse proxy** for TLS. It does not terminate TLS itself. It does not
-need a large body limit either — see the next section for why.
 
 ---
 
@@ -101,19 +124,76 @@ the file straight to the bucket. A 200 MB assembly never passes through Node.
 
 Two consequences, and they are the two things installs get wrong:
 
-1. **`STORAGE_ENDPOINT` must be reachable from your users' browsers**, not only
-   from the server. An address that resolves inside the data centre and nowhere
-   else will pass every check on the server and fail every upload on every
-   desktop.
+1. **`STORAGE_PUBLIC_ENDPOINT` must be an address your users' browsers can
+   open.** There are two settings for one store, and this is why:
+
+   | | Used by | Bundled value |
+   |---|---|---|
+   | `STORAGE_ENDPOINT` | web and worker, from inside the container network | `http://minio:9000` |
+   | `STORAGE_PUBLIC_ENDPOINT` | the browser, from somebody's desk | `http://localhost:9000` |
+
+   `minio` is a name that resolves on the container network and nowhere else,
+   so it cannot be the one a browser is given. The address is part of what gets
+   signed, so this cannot be repaired by rewriting the URL afterwards — the
+   signature would stop matching. It has to be signed for the address the
+   browser will really use.
+
+   **The shipped `localhost:9000` is right only while you are sitting at the
+   machine running Docker.** For anyone else, set it to the server's own name
+   or address — `http://cad.internal.example:9000`, or whatever your proxy
+   puts in front of port 9000. Leave `STORAGE_PUBLIC_ENDPOINT` empty when one
+   address genuinely works everywhere, which is the ordinary case for a hosted
+   bucket.
+
+   `preflight` fails outright if browsers would be handed a container-only
+   name, and warns if they would be handed `localhost` while the site is
+   served from somewhere else. It cannot do better than that: it is not on
+   anybody's desktop.
 
 2. **The bucket must allow cross-origin requests from `SITE_URL`.** The browser
    sends a preflight `OPTIONS` before the `PUT`. Allow the origin, the methods
-   `GET`, `PUT` and `HEAD`, and the `content-type` header. On MinIO this is the
-   bucket's CORS configuration; some builds allow everything by default, which
-   is why this only bites on the ones that do not.
+   `GET`, `PUT` and `HEAD`, and the `content-type` header. The bundled MinIO is
+   started with `MINIO_API_CORS_ALLOW_ORIGIN=*`, so this is already true; on a
+   bucket of your own it is a setting you have to make. An origin is not a
+   credential — the presigned URL is what authorises the request — so allowing
+   one costs nothing.
 
 The upside of the same design: your proxy never carries a 200 MB body, so
 `client_max_body_size` and upload timeouts do not need raising.
+
+---
+
+## Using a database and bucket you already run
+
+The bundled Postgres and MinIO are a convenience, not a commitment. To use the
+company's instead, change four values in `.env.deploy`:
+
+```
+DATABASE_URL=postgresql://USER:PASSWORD@db.internal:5432/ehsimcad
+STORAGE_ENDPOINT=https://storage.internal:9000
+STORAGE_PUBLIC_ENDPOINT=            # empty, if that address works everywhere
+STORAGE_ACCESS_KEY_ID=...
+STORAGE_SECRET_ACCESS_KEY=...
+```
+
+and add `--no-deps` to the three commands:
+
+```
+docker compose run --rm --no-deps preflight
+docker compose run --rm --no-deps migrate
+docker compose up -d --no-deps web worker
+```
+
+`--no-deps` is the part that matters. Naming the services alone is **not**
+enough: Compose starts a named service's dependencies as well, so
+`docker compose up -d web worker` would start the very Postgres you are
+replacing — and you would have two databases, one of them quietly empty and
+holding nothing you meant to keep.
+
+What you need from that side: Postgres 14 or newer, with a database and a user
+that owns it — the application creates its own tables — and one bucket with a
+key pair that can read, write **and delete** in it. `preflight` checks all of
+that against the real thing before anything serves.
 
 ---
 
@@ -150,9 +230,10 @@ With Docker and a checkout of this repository:
 ./deploy/pack-images.sh linux/amd64
 ```
 
-It builds all three images, checks that they really came out for the
+It builds the three application images, pulls the three it does not build --
+Postgres, MinIO and `mc` -- checks that all six really came out for the
 architecture you asked for, and leaves one file:
-`ehsimcad-images-linux-amd64.tar.gz`, about 1.1 GB. Nothing in it is secret --
+`ehsimcad_v1-images-linux-amd64.tar.gz`, about 1.1 GB. Nothing in it is secret --
 the build reads no configuration, which is why one archive serves every
 environment.
 
@@ -164,10 +245,10 @@ image carries its own Linux.
 Carry the file over however files get carried there, then:
 
 ```
-docker load -i ehsimcad-images-linux-amd64.tar.gz
+docker load -i ehsimcad_v1-images-linux-amd64.tar.gz
 ```
 
-Three images appear. The four steps under [Start here](#start-here) now run
+Six images appear. The four steps under [Start here](#start-here) now run
 unchanged, offline: Compose builds a service only when its image is missing,
 and none of them is.
 
@@ -207,9 +288,17 @@ because it cannot reach anything. That failure is the correct one to get.
 cp .env.deploy.example .env.deploy
 ```
 
-Fill it in. Every value is explained in the file. The four that have no
-sensible default are `DATABASE_URL`, the storage credentials, `AUTH_SECRET`
-(`openssl rand -base64 32`) and `SITE_URL`.
+Every value is explained in the file. As shipped it already matches the
+bundled Postgres and MinIO, so the only one you must fill in is `AUTH_SECRET`
+(`openssl rand -base64 32`).
+
+Two more to look at before anybody else uses this:
+
+- **`SITE_URL`** — the address people will type. Sign-in does not work until
+  this is right: the application is inside a container and cannot see what
+  anybody typed, so every URL it builds for itself comes from here.
+- **`STORAGE_PUBLIC_ENDPOINT`** — the address browsers upload to. `localhost`
+  is correct only at the machine running Docker.
 
 ### Check the configuration before anything runs
 
@@ -394,44 +483,65 @@ that nothing points at. Seconds-wide, and it costs storage, not correctness.
 
 ## What has not been tested
 
-Both images have now been built and run, on an arm64 Mac under Colima, against
-a real Postgres and a real S3 bucket:
+v1 was built and run on an arm64 Mac under Colima, against the Postgres and the
+MinIO that come with it. From an empty slate -- `docker compose down -v` first,
+so no volume survived from an earlier attempt -- running exactly the four steps
+at the top of this file:
 
 | Step | Result |
 |---|---|
-| `docker compose build` | both images build |
-| `docker compose run --rm preflight` | connects, checks the schema, writes and reads back a test object |
-| `docker compose run --rm migrate` | applies the migrations |
-| `docker compose up -d` | web healthy, worker polling |
-| the site, from outside the container | `/api/health`, `/sign-in` and the viewer all answer |
-| a real STEP file put in the queue | the worker converted it, 7428 triangles, about four seconds |
+| `docker compose build` | all three application images build |
+| `docker compose run --rm preflight` | names the one thing wrong: no migrations applied, 7 to run |
+| `docker compose run --rm migrate` | applies all 7 |
+| `docker compose run --rm preflight` | Ready, with the 2 expected warnings (email, GitHub sign-in) |
+| `docker compose up -d` | four containers; web healthy, postgres healthy, worker polling every 5 s |
+| the site, from outside every container | `/api/health` answers `{"status":"ok","database":true}`, `/sign-in` and the viewer both 200 |
 
-The offline path was tested the same way, and deliberately: the image store and
-the build cache were emptied first, so that anything Compose decided to build
-would have had to fetch a base image and would have left one behind.
+The storage round trip was tested in the shape the browser actually uses it,
+because that is the part these two addresses exist for:
 
 | Step | Result |
 |---|---|
-| `./deploy/pack-images.sh linux/amd64` | three x86-64 images, one file of 1.1 GB |
-| `docker load` into an empty store | all three restored |
-| `preflight` and `up -d` from the loaded images | ran; the build cache was still empty afterwards, so nothing was built and nothing was pulled |
+| a presigned PUT, signed by the web application's own signing path | came out for `http://localhost:9000` -- the browser's address, not `minio:9000` |
+| the CORS preflight a browser sends first | `OPTIONS` → 204 |
+| the upload itself, from outside every container | `PUT` → 200 |
+| the worker reading that object back over the internal address | the same bytes, via `http://minio:9000` |
 
-Images: **457 MB** for the web, **2.0 GB** for the converter, which is
-OpenCascade. Compressed for transfer, all three together come to 1.1 GB.
+The offline path was tested into a genuinely empty image store -- a second
+Docker daemon on the same machine that had never seen this project, with no
+images of ours and a build cache of 0 B:
+
+| Step | Result |
+|---|---|
+| `./deploy/pack-images.sh linux/arm64` | six arm64 images, one file of 1.3 GB |
+| `docker load` into the empty store | all six restored |
+| the four steps, from the loaded images | preflight, migrate, `up -d`; web healthy and answering |
+| the build cache afterwards | still 0 B — nothing was built and nothing was pulled |
+
+Image sizes, as the daemon reports them on disk: **457 MB** web, **2.3 GB**
+worker (OpenCascade), **2.4 GB** tools, **411 MB** Postgres, **228 MB** MinIO,
+**112 MB** `mc`. Compressed for transfer, all six come to 1.3 GB.
+
+**Not tried: an upload through the site's own form.** Everything underneath it
+has been exercised in this stack -- signing, CORS, the PUT, and the worker
+reading the object back -- but no file has gone through the catalogue in a
+browser here, because that is behind sign-in. The conversion itself is covered
+elsewhere: a real STEP file put on the queue was converted by this worker in
+about four seconds, 7428 triangles.
 
 **Not tried: `systemctl start`.** There is no systemd on the machine this was
 developed on, so the unit files are written from the install steps rather than
 from a run.
 
-**Not tried: MinIO, or any storage other than Supabase's.** Both are spoken to
-over standard protocols and the S3 client is already configured for path-style
-addressing, which is what MinIO needs — but MinIO itself has not been used.
+**Not tried: storage other than the bundled MinIO and Supabase.** Ceph and
+StorageGRID answer the same protocol and the S3 client is already set to
+path-style addressing, but neither has been used.
 
-**Not tried: x86-64 hardware.** The x86-64 images have been built and run --
-preflight reached a real database and a real bucket, the site answered, the
-worker started and polled -- but on an arm64 Mac emulating x86-64, because
-there was no x86-64 machine to hand. That exercises the images and everything
-in them; it does not exercise a real Intel or AMD processor.
+**Not tried for v1: x86-64.** The archive tested above is arm64. The x86-64
+build was exercised for the previous version -- images built, loaded, preflight
+against a real database and bucket, the site answering -- but on an arm64 Mac
+emulating x86-64, because there was no x86-64 machine to hand. **Build and load
+the `linux/amd64` archive once before the install day**, rather than on it.
 
 The preflight check is the thing to trust: it exercises the real database and
 the real bucket, whatever they turn out to be.
@@ -446,31 +556,54 @@ komutlar aynıdır.
 
 ### Ne kuruyorsunuz
 
-Sürekli çalışan iki süreç: **web** (Node, 3000 portu, sitenin kendisi) ve
-**worker** (Python + OpenCascade, yüklenen CAD dosyalarını dönüştürür). İkisi
-bir Postgres veritabanını ve bir nesne depolama kovasını paylaşır, birbirleriyle
-hiç konuşmaz. Worker durursa site çalışmaya devam eder, yüklemeler sırada
-bekler.
+Sürekli çalışan iki süreç ve paylaştıkları iki depo: **web** (Node, 3000 portu,
+sitenin kendisi), **worker** (Python + OpenCascade, yüklenen CAD dosyalarını
+dönüştürür), **postgres** (katalog ve iş kuyruğu; portu dışarı açılmaz) ve
+**minio** (dosyaların kendisi, S3 protokolü, 9000 portu). web ile worker
+birbirleriyle hiç konuşmaz; yükleme kuyruk tablosunda bir satır olur, worker
+onu alır. Worker durursa site çalışmaya devam eder, yüklemeler sırada bekler.
+
+**Önceden hiçbir şeyin var olması gerekmiyor.** Postgres ve depolama
+`compose.yaml` ile birlikte geliyor; kurulum, üzerinde yalnızca Docker olan boş
+bir makinede ve hiçbir hesap açmadan tamamlanır. Kurumda zaten bir veritabanı
+ve bir kova varsa onları kullanmak dört satır ayar ve bir bayrak meselesi —
+aşağıdaki "Kendi veritabanınız ve kovanız" başlığına bakın.
 
 ### Sizden istenenler
 
-Postgres 14+ (bir veritabanı ve onu sahiplenen bir kullanıcı), S3 uyumlu bir
-depolama kovası ve okuma/yazma/silme yapabilen bir anahtar çifti, 2 GB RAM'lik
-bir sunucu, ve TLS için önünde bir ters vekil. Vekilin büyük gövde limitine
-ihtiyacı yok — dosyalar uygulamanın üzerinden geçmiyor.
+Docker ve 2–3 GB RAM'lik bir makine. Liste bu kadar. Bir de TLS için 3000
+portunun önünde bir ters vekil; vekilin büyük gövde limitine ihtiyacı yok,
+çünkü dosyalar uygulamanın üzerinden geçmiyor.
 
 ### Sıra
 
 ```
-cp .env.deploy.example .env.deploy    # doldurun
+cp .env.deploy.example .env.deploy    # içindeki AUTH_SECRET'i doldurun
 docker compose run --rm preflight     # "Ready" demeli
 docker compose run --rm migrate       # tabloları oluşturur
 docker compose up -d
 ```
 
-`.env.deploy` içindeki her ayarın ne işe yaradığı dosyanın kendi içinde
-yazılıdır. Varsayılanı olmayan dört değer: `DATABASE_URL`, depolama
-kimlik bilgileri, `AUTH_SECRET` (`openssl rand -base64 32`) ve `SITE_URL`.
+Varsayılanı olmayan tek değer `AUTH_SECRET`: `openssl rand -base64 32` bir tane
+üretir. Dosyadaki geri kalan her şey birlikte gelen Postgres ve MinIO ile zaten
+uyumludur; her ayarın ne işe yaradığı da dosyanın kendi içinde yazılıdır.
+
+### Kendi veritabanınız ve kovanız
+
+`.env.deploy` içinde `DATABASE_URL`, `STORAGE_ENDPOINT`,
+`STORAGE_PUBLIC_ENDPOINT` ve depolama anahtarlarını kendi altyapınıza çevirin,
+sonra üç komuta `--no-deps` ekleyin:
+
+```
+docker compose run --rm --no-deps preflight
+docker compose run --rm --no-deps migrate
+docker compose up -d --no-deps web worker
+```
+
+Önemli olan `--no-deps`. Yalnızca servis adını yazmak **yetmez**: Compose
+adını verdiğiniz servisin bağımlılıklarını da başlatır, yani
+`docker compose up -d web worker` tam da yerine geçmek istediğiniz Postgres'i
+ayağa kaldırır.
 
 ### İnternetsiz sunucu
 
@@ -495,18 +628,19 @@ sunucuya benzemesi gerekmez:
 ./deploy/pack-images.sh linux/amd64
 ```
 
-Üç imajı derler, gerçekten istenen mimaride çıktıklarını doğrular ve tek bir
-dosya bırakır: `ehsimcad-images-linux-amd64.tar.gz`, yaklaşık 1,1 GB. İçinde
+Üç uygulama imajını derler, derlemediği üçünü -- Postgres, MinIO ve `mc` --
+indirir, altısının da gerçekten istenen mimaride olduğunu doğrular ve tek bir
+dosya bırakır: `ehsimcad_v1-images-linux-amd64.tar.gz`, yaklaşık 1,1 GB. İçinde
 gizli hiçbir şey yoktur — derleme hiçbir ayar okumaz, o yüzden tek arşiv her
 ortama gider.
 
 **Sunucuda:**
 
 ```
-docker load -i ehsimcad-images-linux-amd64.tar.gz
+docker load -i ehsimcad_v1-images-linux-amd64.tar.gz
 ```
 
-Üç imaj görünür. Yukarıdaki dört adım bundan sonra olduğu gibi, internetsiz
+Altı imaj görünür. Yukarıdaki dört adım bundan sonra olduğu gibi, internetsiz
 çalışır: Compose bir servisi yalnızca imajı yoksa derler, artık hiçbirinin
 imajı eksik değildir.
 
@@ -536,12 +670,27 @@ servis ayağa kalktıktan sonra "uygulama bozuk" gibi görünür.
 
 **2. Depolama adresi kullanıcıların bilgisayarından erişilebilir olmalı**,
 yalnızca sunucudan değil. Tarayıcı dosyayı doğrudan depolamaya yükler, hiçbir
-zaman uygulamanın üzerinden geçmez. Sadece veri merkezi içinden çözülen bir
-adres sunucudaki her testi geçer ve her masaüstünde yüklemeyi başarısız kılar.
+zaman uygulamanın üzerinden geçmez. Bu yüzden tek depo için iki ayar var:
+
+| Ayar | Kimin kullandığı | Gelen değer |
+|---|---|---|
+| `STORAGE_ENDPOINT` | web ve worker, konteyner ağının içinden | `http://minio:9000` |
+| `STORAGE_PUBLIC_ENDPOINT` | tarayıcı, birinin masasından | `http://localhost:9000` |
+
+`minio` adı yalnızca konteyner ağında çözülür, tarayıcıda çözülmez. Adres
+imzanın parçası olduğu için URL'yi sonradan düzeltmek de işe yaramaz — imza
+tutmaz. Baştan doğru adres için imzalanmalı.
+
+**Gelen `localhost:9000` değeri yalnızca Docker'ı çalıştıran makinenin başında
+otururken doğrudur.** Başka herkes için sunucunun adını ya da adresini yazın.
+`preflight`, tarayıcıya konteyner-içi bir ad verilecekse doğrudan hata verir;
+`localhost` verilecekken site başka bir adresten sunuluyorsa uyarır. Daha
+fazlasını yapamaz: kimsenin masaüstünde değil.
 
 **3. Kova, sitenin adresinden gelen çapraz kaynak isteklerine izin vermeli.**
 Aynı sebep. Tarayıcı dosyayı göndermeden önce `OPTIONS` gönderir. Kaynağa,
 `GET` / `PUT` / `HEAD` metotlarına ve `content-type` başlığına izin verin.
+Birlikte gelen MinIO buna zaten izin veriyor; kendi kovanıza siz söylemelisiniz.
 
 ### Çalıştığını doğrulama
 
@@ -596,29 +745,45 @@ desteklenmiyor. `MAIL_API_KEY` boş bırakılabilir — şifre sıfırlama ve ad
 doğrulama dışında her şey çalışır. GitHub ile giriş internet erişimi ister;
 kapalı ağda kapatın, e-posta ve şifreyle giriş çalışır.
 
-### Denenmemiş olanlar
+### Denenmiş ve denenmemiş olanlar
 
-Her iki imaj da derlendi ve çalıştırıldı — arm64 Mac üzerinde Colima ile,
-gerçek bir Postgres ve gerçek bir S3 kovasına karşı: `docker compose build`,
-`preflight`, `migrate`, `docker compose up -d`, dışarıdan `/api/health` ve
-viewer, ve kuyruğa konan gerçek bir STEP dosyasının worker tarafından
-dönüştürülmesi (7428 üçgen, ~4 saniye). İmajlar: web 457 MB, converter 2,0 GB
-(OpenCascade).
+v1, arm64 bir Mac üzerinde Colima ile, birlikte gelen Postgres ve MinIO'ya
+karşı derlendi ve çalıştırıldı. Sıfırdan — önce `docker compose down -v`, yani
+önceki denemelerden hiçbir disk kalmadan — ve tam olarak yukarıdaki dört adım:
+`preflight` eksik olan tek şeyi söyledi (7 migration bekliyor), `migrate`
+yedisini de uyguladı, `preflight` "Ready" dedi (beklenen 2 uyarıyla: e-posta ve
+GitHub girişi kapalı), `up -d` dört konteyneri kaldırdı — web sağlıklı,
+postgres sağlıklı, worker 5 saniyede bir kuyruğa bakıyor. Dışarıdan
+`/api/health` `{"status":"ok","database":true}` döndü; `/sign-in` ve viewer 200.
 
-İnternetsiz yol da aynı şekilde ve bilerek zorlanarak sınandı: imaj deposu ve
-derleme önbelleği önce tamamen boşaltıldı, böylece Compose bir şey derlemeye
-kalksaydı temel imajı çekmek zorunda kalacak ve arkasında iz bırakacaktı.
-`./deploy/pack-images.sh linux/amd64` üç x86-64 imajı ve 1,1 GB'lık tek bir
-dosya üretti; boş bir depoya `docker load` ile geri yüklendi; `preflight` ve
-`up -d` yalnızca yüklenen imajlardan çalıştı ve sonrasında derleme önbelleği
-hâlâ boştu — yani hiçbir şey derlenmedi, hiçbir şey indirilmedi.
+Depolama gidiş-dönüşü, tarayıcının gerçekten kullandığı biçimde sınandı —
+iki adresin var olma sebebi tam olarak bu: uygulamanın kendi imzalama yolundan
+üretilen PUT URL'si `http://localhost:9000` için çıktı (`minio:9000` için
+değil), tarayıcının önce gönderdiği CORS `OPTIONS` isteği 204 aldı, bütün
+konteynerlerin dışından yapılan `PUT` 200 aldı, ve worker aynı nesneyi iç
+adresten (`http://minio:9000`) aynı içerikle geri okudu.
 
-**Denenmeyenler:** `systemctl start` (bu makinede systemd yok, birim dosyaları
-kurulum adımlarından yazıldı), MinIO ya da Supabase dışı bir depolama, ve
-**gerçek x86-64 donanımı**: x86-64 imajları derlendi ve çalıştırıldı, ama
-elde x86-64 makine olmadığı için arm64 bir Mac üzerinde öykünme (emulation)
-ile. Bu, imajların içindeki her şeyi sınar; gerçek bir Intel ya da AMD
-işlemcisini sınamaz.
+İnternetsiz yol, gerçekten boş bir imaj deposunda sınandı: aynı makinede bu
+projeyi hiç görmemiş ikinci bir Docker sunucusu, bize ait hiçbir imaj ve 0 B
+derleme önbelleği. `./deploy/pack-images.sh linux/arm64` altı imajı ve 1,3
+GB'lık tek bir dosya üretti; `docker load` altısını da geri yükledi; dört adım
+yalnızca yüklenen imajlardan çalıştı ve sonrasında derleme önbelleği hâlâ 0
+B'ydi — hiçbir şey derlenmedi, hiçbir şey indirilmedi.
+
+İmaj boyutları (diskte): web 457 MB, worker 2,3 GB (OpenCascade), tools 2,4 GB,
+Postgres 411 MB, MinIO 228 MB, `mc` 112 MB. Taşımak için sıkıştırıldığında
+altısı 1,3 GB.
+
+**Denenmeyenler.** Sitenin kendi yükleme formundan bir dosya: altındaki her şey
+bu yığında sınandı (imzalama, CORS, PUT, worker'ın geri okuması) ama giriş
+gerektirdiği için tarayıcıdan uçtan uca bir yükleme burada yapılmadı —
+dönüştürmenin kendisi başka yerde kanıtlı: kuyruğa konan gerçek bir STEP
+dosyası bu worker tarafından ~4 saniyede dönüştürüldü, 7428 üçgen. Ayrıca
+`systemctl start` (bu makinede systemd yok), MinIO ve Supabase dışı bir
+depolama, ve **v1 için x86-64**: yukarıdaki arşiv arm64. x86-64 bir önceki
+sürümde derlenip çalıştırıldı, ama elde x86-64 makine olmadığı için arm64 bir
+Mac üzerinde öykünmeyle. **`linux/amd64` arşivini kurulum gününden önce bir
+kez üretip yükleyin**, kurulum gününde değil.
 
 Güvenilecek şey `preflight` çıktısıdır: sizin gerçek veritabanınızı ve gerçek
 kovanızı sınar.

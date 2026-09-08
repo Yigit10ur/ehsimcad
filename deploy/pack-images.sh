@@ -74,8 +74,28 @@ IMAGES=$(docker compose --profile tools config --images | sort -u)
 # The architecture on its own: `linux/arm64/v8` names a variant that
 # `.Architecture` does not carry.
 WANT="$(echo "$PLATFORM" | cut -d/ -f2)"
+
+# Ask about the platform we want, not about the image in general.
+#
+# `docker image inspect` on its own answers with *this machine's* architecture
+# whenever the daemon keeps images the containerd way: a pulled base image
+# holds every platform its publisher built, and inspect picks the one that
+# matches the host. So the plain check called a perfectly good amd64 archive
+# arm64 and refused to pack it, on a machine where all six images were right.
+#
+# `--platform` asks the question that was meant. It fails when the image does
+# not carry that platform, which is the case worth refusing -- and the fallback
+# below then reports the host architecture, which will not match `$WANT`
+# either, so an older CLI without the flag still refuses rather than shipping
+# something unusable.
+arch_of() {
+  docker image inspect --platform "$PLATFORM" "$1" --format '{{.Architecture}}' 2>/dev/null \
+    || docker image inspect "$1" --format '{{.Architecture}}' 2>/dev/null \
+    || echo "unreadable"
+}
+
 for image in $IMAGES; do
-  got=$(docker image inspect "$image" --format '{{.Architecture}}')
+  got=$(arch_of "$image")
   if [ "$got" != "$WANT" ]; then
     echo "Refusing to pack: $image is $got, and the server needs $WANT." >&2
     echo "Emulation for $PLATFORM is probably not installed on this machine." >&2
@@ -94,8 +114,17 @@ done
 # the difference between a gigabyte and four. A daemon using containerd writes
 # them already compressed, and this costs twenty seconds and saves nothing.
 # `docker load` takes either.
+# `--platform` for the same reason as the check above: a base image kept the
+# containerd way carries every platform it was published for, and without this
+# the archive would hold six architectures of Postgres to deliver one. Older
+# CLIs have no such flag; there the image is single-platform anyway.
+SAVE_PLATFORM=""
+if docker save --help 2>&1 | grep -q -- '--platform'; then
+  SAVE_PLATFORM="--platform $PLATFORM"
+fi
+
 # shellcheck disable=SC2086
-docker save $IMAGES | gzip > "$ARCHIVE"
+docker save $SAVE_PLATFORM $IMAGES | gzip > "$ARCHIVE"
 
 echo
 echo "$ARCHIVE"

@@ -378,6 +378,24 @@ would be handed a single-label name like `minio`, because that is the shape of
 the mistake that passes every check on the server and fails every upload on
 every desktop.
 
+**`docker image inspect` answers about this machine, not about the image.**
+`pack-images.sh` refused to pack a correct `linux/amd64` archive, saying
+`minio/mc ... is arm64`. It was not: the image carried both, and so did
+Postgres and MinIO. A daemon keeping images the containerd way -- which is what
+Colima does -- stores every platform a base image was published for, and plain
+`inspect` reports the one matching the host. The check could therefore never
+pass for a cross-architecture build on this machine, and would equally have
+passed something wrong on a machine of the target architecture. Fixed by asking
+the question that was meant: `docker image inspect --platform "$PLATFORM"`,
+which reports that platform or fails when it is absent. An older CLI without
+the flag falls back to the plain form and still refuses, which is the safe
+direction. `docker save --platform` went in beside it -- otherwise the archive
+carries all six architectures of Postgres to deliver one.
+
+Worth noting how it was caught: the guard fired, and the first reading was that
+it had done its job. It had not -- it was wrong about its own subject. A check
+that refuses is not self-evidently a check that works.
+
 **`required: false` does not leave a dependency out.** It was in `compose.yaml`
 for one commit, on the theory that it would let `docker compose up -d web
 worker` skip the bundled Postgres. It does not: Compose starts a named

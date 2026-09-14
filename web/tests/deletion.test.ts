@@ -266,9 +266,42 @@ describe('the keys a model occupies', () => {
     // key and nothing else. Passing nulls to storage would delete whatever a
     // null stringifies into.
     const keys = keysOf([
-      { sourceKey: 'a/source.step', glbKey: null, metadataKey: null, thumbnailKey: null },
+      {
+        sourceKey: 'a/source.step',
+        glbKey: null,
+        metadataKey: null,
+        thumbnailKey: null,
+        stepKey: null,
+      },
     ]);
 
     expect(keys).toEqual(['a/source.step']);
+  });
+
+  it('takes every file a version has, including the estimated STEP', () => {
+    /*
+     * This is the test that has to be updated when a new derived file is
+     * added, and forgetting it is how a file ends up orphaned: the row that
+     * named it is gone, so nothing points at it again, and it is invisible and
+     * still paid for. Written as the whole list rather than as "contains the
+     * step key" so that a fifth file cannot pass unnoticed.
+     */
+    const keys = keysOf([
+      {
+        sourceKey: 'a/source.dxf',
+        glbKey: 'a/model.glb',
+        metadataKey: 'a/metadata.json',
+        thumbnailKey: 'a/thumb.png',
+        stepKey: 'a/estimated.step',
+      },
+    ]);
+
+    expect(keys).toEqual([
+      'a/source.dxf',
+      'a/model.glb',
+      'a/metadata.json',
+      'a/thumb.png',
+      'a/estimated.step',
+    ]);
   });
 });

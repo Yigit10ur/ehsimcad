@@ -90,6 +90,7 @@ export function keysOf(
     glbKey: string | null;
     metadataKey: string | null;
     thumbnailKey: string | null;
+    stepKey: string | null;
   }[],
 ): string[] {
   return versions
@@ -98,6 +99,7 @@ export function keysOf(
       version.glbKey,
       version.metadataKey,
       version.thumbnailKey,
+      version.stepKey,
     ])
     .filter((key): key is string => Boolean(key));
 }

@@ -55,7 +55,14 @@ def converted(monkeypatch: pytest.MonkeyPatch) -> None:
         units="mm",
         declared_name=SECRET_NAME,
     )
-    result = SimpleNamespace(triangle_count=1234, deflection=0.1, metadata=metadata)
+    # `step_path` is None here because this fixture stands in for a STEP
+    # upload, which produces no estimated solid. It is spelled out rather than
+    # left off: the stub is standing in for a `ConversionResult`, which always
+    # carries the field, and a stub that is missing one is a stub that agrees
+    # with the code only by accident.
+    result = SimpleNamespace(
+        triangle_count=1234, deflection=0.1, metadata=metadata, step_path=None
+    )
 
     monkeypatch.setattr(worker, "download", lambda key, to: to)
     monkeypatch.setattr(worker, "upload", lambda path, key, kind: None)

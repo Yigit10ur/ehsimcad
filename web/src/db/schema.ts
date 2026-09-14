@@ -190,6 +190,15 @@ export const modelVersions = pgTable(
     glbKey: text('glb_key'),
     metadataKey: text('metadata_key'),
     thumbnailKey: text('thumbnail_key'),
+    /**
+     * The estimated solid, written back out as STEP.
+     *
+     * Set only where the geometry was reconstructed from a drawing, which is
+     * to say only on an `estimate` version. A model read from a real solid has
+     * none: its uploader already holds that file, and offering a re-export of
+     * it would dress a round trip through the converter up as the original.
+     */
+    stepKey: text('step_key'),
 
     status: conversionStatusEnum('status').notNull().default('uploading'),
     errorMessage: text('error_message'),

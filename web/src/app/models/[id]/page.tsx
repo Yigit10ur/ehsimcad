@@ -5,7 +5,7 @@ import { RevisionUpload } from '@/components/catalogue/RevisionUpload';
 import { ModelWorkspace } from '@/components/viewer/ModelWorkspace';
 import { modeOf } from '@/lib/models';
 import { canWrite, currentUser, readableModel } from '@/lib/session';
-import { presignDownload } from '@/lib/storage';
+import { estimatedStepFilename, presignDownload } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +43,13 @@ export default async function ModelPage({ params, searchParams }: Props) {
     : versions.find((candidate) => candidate.status === 'ready');
 
   const ready = version?.status === 'ready' && version.glbKey && version.metadataKey;
+
+  // Signed here rather than in the markup: a link is a link, and an awaited
+  // expression inside a JSX attribute is something every reader and half the
+  // tooling has to stop and resolve.
+  const stepUrl = version?.stepKey
+    ? await presignDownload(version.stepKey, estimatedStepFilename(model.name))
+    : null;
 
   return (
     <main className="flex h-dvh flex-col bg-slate-50">
@@ -100,6 +107,22 @@ export default async function ModelPage({ params, searchParams }: Props) {
           )}
 
           {version && <span>{version.sourceFormat.toUpperCase()}</span>}
+
+          {/*
+            Offered only where there is something to offer: a version whose
+            geometry was worked out from a drawing. The word `estimated` is in
+            the label, in the file name and in the file's own header, because
+            each of those is where a different person stops reading.
+          */}
+          {stepUrl && (
+            <a
+              href={stepUrl}
+              title="The solid this drawing was read as, as a STEP file. It is an estimate: check it against the drawing before making anything from it."
+              className="rounded border border-amber-300 bg-amber-50 px-2 py-1 font-medium text-amber-800 transition-colors hover:bg-amber-100"
+            >
+              estimated STEP ↓
+            </a>
+          )}
 
           {writable && (
             <RevisionUpload

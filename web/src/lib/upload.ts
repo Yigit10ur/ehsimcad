@@ -11,7 +11,7 @@
  * PUT never becomes a job.
  */
 
-import { rejectionReason } from './formats';
+import { rejectionReason, type UploadMode } from './formats';
 
 export type UploadStage = 'idle' | 'creating' | 'uploading' | 'queueing';
 
@@ -21,6 +21,16 @@ export interface UploadTarget {
   /** Which project a new model goes into. Ignored when adding a revision: a
    *  revision belongs wherever its model already is. */
   projectId?: string;
+  /**
+   * Which of the two operations this is.
+   *
+   * Required either way, and for opposite reasons. A new model is what settles
+   * the mode, so it has to be sent. A revision cannot settle anything -- the
+   * server takes the mode from the model being revised and ignores anything
+   * said here -- but knowing it is what lets the wrong file be refused in the
+   * browser rather than after a round trip.
+   */
+  mode: UploadMode;
 }
 
 export interface UploadResult {
@@ -49,7 +59,7 @@ export async function uploadCadFile(
    */
   lengthMm?: number,
 ): Promise<UploadResult> {
-  const rejection = rejectionReason(file.name);
+  const rejection = rejectionReason(file.name, target.mode);
   if (rejection) throw new Error(rejection);
 
   const contentType = file.type || 'application/octet-stream';
@@ -62,6 +72,10 @@ export async function uploadCadFile(
     body: JSON.stringify({
       name: file.name.replace(/\.[^.]+$/, ''),
       projectId: target.projectId,
+      // Sent only where it decides something. A revision takes the mode of the
+      // model it joins, and a field the endpoint ignores reads like one it
+      // honours.
+      mode: target.modelId ? undefined : target.mode,
       filename: file.name,
       contentType,
       sizeBytes: file.size,

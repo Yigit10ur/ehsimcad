@@ -146,6 +146,13 @@ class ModelMetadata(BaseModel):
 
 class ConversionResult(BaseModel):
     glb_path: str
+    """Where the estimated solid was written as STEP, when one was.
+
+    Set only for a `derived` source. A model read from a real solid has no
+    entry here on purpose: the uploader already holds that file, and offering
+    a re-export of it would dress a round trip up as the original.
+    """
+    step_path: str | None = None
     metadata: ModelMetadata
     triangle_count: int
     deflection: float

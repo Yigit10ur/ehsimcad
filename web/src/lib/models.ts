@@ -11,11 +11,34 @@
 import { and, eq, inArray } from 'drizzle-orm';
 
 import { db, schema } from '@/db';
+import type { UploadMode } from '@/lib/formats';
 import { deleteObjects } from '@/lib/storage';
 
 type MemberRole = (typeof schema.memberRoleEnum.enumValues)[number];
 
 type VersionFacts = { versionNo: number; createdBy: string | null };
+
+type ModeFacts = { versionNo: number; mode: UploadMode };
+
+/**
+ * Which of the two operations this model came from.
+ *
+ * Read from the first version for the same reason the uploader is: it is the
+ * upload that created the model, and the revisions after it are revisions of
+ * what that upload made. A model is either something that was opened or
+ * something that was estimated, and adding a revision does not change which.
+ *
+ * Rows written before the mode was recorded were backfilled from their format,
+ * so there is no era of models this cannot answer for. Defaults to `model`
+ * only when there are no versions at all, which the catalogue never renders.
+ */
+export function modeOf(versions: ModeFacts[]): UploadMode {
+  let first: ModeFacts | null = null;
+  for (const version of versions) {
+    if (!first || version.versionNo < first.versionNo) first = version;
+  }
+  return first?.mode ?? 'model';
+}
 
 /**
  * Who put this model here.

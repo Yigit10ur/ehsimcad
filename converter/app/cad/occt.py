@@ -453,6 +453,132 @@ def convert(
     return build(roots, out_glb, deflection)
 
 
+# ---------------------------------------------------------------------------
+# Writing the estimated solid back out as STEP
+#
+# A model recovered from a drawing is a guess, and the platform says so
+# everywhere: the catalogue marks it, the viewer shows what the reading
+# assumed. A .step file leaving here keeps none of that. It sits on somebody's
+# disk as a part, gets mailed to a supplier, opens in a CAD system that has
+# never heard of this platform -- and at that point nothing is left to say it
+# was worked out from a sheet rather than modelled.
+#
+# So the provenance goes inside the file, where it travels with it: the product
+# name carries the word, and the header carries the sentence. Neither is
+# decoration. They are the only warning a downloaded file can still give.
+# ---------------------------------------------------------------------------
+
+# What marks an estimated part wherever its name is read -- the assembly tree
+# of whatever CAD system opens it, and the file name it is saved under.
+ESTIMATE_SUFFIX = "_ESTIMATED"
+
+
+def ascii_only(text: str) -> str:
+    """The nearest ASCII spelling of a name.
+
+    STEP header strings are ASCII, and a part called `mil sonu somunu` is not
+    the problem -- `şaft` is. Rather than let the encoding decide (which is how
+    a name becomes mojibake in a supplier's CAD system), accented letters are
+    folded to their base letter and anything with no base is dropped.
+
+    The dotless i is folded by hand because it decomposes into nothing: it is
+    already a base letter, just not one ASCII has.
+    """
+    import unicodedata
+
+    folded = text.replace("ı", "i").replace("İ", "I")
+    decomposed = unicodedata.normalize("NFKD", folded)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return "".join(c for c in stripped if c.isascii() and c.isprintable())
+
+
+def step_product_name(name: str) -> str:
+    """What the part is called inside the exported file.
+
+    The suffix is part of the warning, so it survives being renamed on disk:
+    a CAD system shows the product name in its tree whatever the file is
+    called. Added once -- re-exporting an already marked name must not grow a
+    second one.
+    """
+    base = ascii_only(name).strip() or "part"
+    return base if base.endswith(ESTIMATE_SUFFIX) else f"{base}{ESTIMATE_SUFFIX}"
+
+
+def step_description(derived: DerivedGeometry, source_name: str) -> str:
+    """The sentence written into the STEP file's own header.
+
+    Written to be read by somebody who has the file and not this platform, so
+    it says what the thing is before it says how it was made, and it says what
+    to do about it. The assumptions and the ignored list are carried over
+    verbatim: they are the reading's own account of itself, and shortening them
+    here would leave the viewer and the file disagreeing.
+    """
+    parts = [
+        "ESTIMATED GEOMETRY - NOT A MODELLED PART.",
+        (
+            f"Reconstructed by EhsimCAD from the 2D drawing "
+            f"{ascii_only(source_name) or 'supplied'} ({derived.method})."
+        ),
+        (
+            "The shape is a reading of that drawing and can be wrong about it. "
+            "Check it against the drawing before manufacturing from it."
+        ),
+    ]
+
+    if derived.assumptions:
+        assumed = "; ".join(ascii_only(a) for a in derived.assumptions)
+        parts.append(f"Assumed: {assumed}.")
+    if derived.ignored:
+        ignored = "; ".join(ascii_only(i) for i in derived.ignored)
+        parts.append(f"Ignored: {ignored}.")
+
+    return " ".join(parts)
+
+
+def export_step(shape, out_path: Path, product_name: str, description: str) -> Path:
+    """Write one shape to a STEP file, carrying its provenance in the header.
+
+    Millimetres, stated rather than assumed: the rest of the pipeline is in
+    millimetres and a STEP file that does not say so is read as whatever the
+    receiving system defaults to.
+
+    AP214 rather than AP242. Both would do, and AP242 is the newer of the two,
+    but AP214 is what every CAD system in use can read without a word about it,
+    and nothing exported here needs what AP242 adds.
+    """
+    from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
+    from OCP.IFSelect import IFSelect_ReturnStatus
+    from OCP.Interface import Interface_Static
+    from OCP.STEPControl import STEPControl_StepModelType, STEPControl_Writer
+    from OCP.TCollection import TCollection_HAsciiString
+
+    writer = STEPControl_Writer()
+
+    # These are global to the OCCT session, not to the writer, and the worker
+    # converts a whole queue in one process. Every export sets all three rather
+    # than relying on what the last one left behind.
+    Interface_Static.SetCVal_s("write.step.unit", "MM")
+    Interface_Static.SetCVal_s("write.step.schema", "AP214IS")
+    Interface_Static.SetCVal_s("write.step.product.name", product_name)
+
+    if writer.Transfer(shape, STEPControl_StepModelType.STEPControl_AsIs) != (
+        IFSelect_ReturnStatus.IFSelect_RetDone
+    ):
+        raise RuntimeError("the solid could not be transferred to STEP")
+
+    header = APIHeaderSection_MakeHeader(writer.Model())
+    header.SetName(TCollection_HAsciiString(product_name))
+    header.SetOriginatingSystem(TCollection_HAsciiString("EhsimCAD"))
+    header.SetAuthorValue(1, TCollection_HAsciiString("EhsimCAD"))
+    header.SetDescriptionValue(1, TCollection_HAsciiString(description))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if writer.Write(str(out_path)) != IFSelect_ReturnStatus.IFSelect_RetDone:
+        raise RuntimeError(f"the STEP file could not be written to {out_path}")
+
+    return out_path
+
+
 def build(
     roots: list[Part],
     out_glb: Path,
@@ -565,8 +691,26 @@ def build(
     out_glb.write_bytes(scene.export(file_type="glb"))
     out_glb.with_suffix(".json").write_text(metadata.model_dump_json(indent=2))
 
+    # Only a reading of a drawing is exported as STEP. A file read from a real
+    # solid already exists as one -- whoever uploaded it has it -- and handing
+    # back a re-exported copy would be offering a round trip through a
+    # tessellator as though it were the original.
+    #
+    # One solid, because that is what a revolved profile is. If a reader ever
+    # produces several from one sheet, they need a name each before they can be
+    # written into one file, and inventing those here would be guessing twice.
+    step_path: Path | None = None
+    if geometry_source == "derived" and derived is not None and len(leaves) == 1:
+        step_path = export_step(
+            leaves[0].shape,
+            out_glb.with_name("estimated.step"),
+            step_product_name(leaves[0].name),
+            step_description(derived, leaves[0].name),
+        )
+
     return ConversionResult(
         glb_path=str(out_glb),
+        step_path=str(step_path) if step_path else None,
         metadata=metadata,
         triangle_count=triangle_total,
         deflection=deflection,

@@ -9,7 +9,34 @@
  * The wording is part of the behaviour. Someone holding a native CAD file
  * needs to be told what to do instead, and that answer is different for a part
  * than it is for a drawing.
+ *
+ * Every format also belongs to one of two modes, because the platform does two
+ * different things and they promise different amounts. Opening a model shows
+ * what the file already contains. Estimating from a drawing reconstructs
+ * something the file never contained, and can be wrong about it. Which one is
+ * happening is chosen before the file is, so that nobody learns which promise
+ * they were given by reading the result.
  */
+
+/**
+ * The two things a person can ask of an upload.
+ *
+ * `model` opens a file that already contains a solid, and reports what is in
+ * it. `estimate` reads a 2D drawing and reconstructs a part the drawing only
+ * documents -- a guess, labelled as one everywhere it surfaces.
+ *
+ * The distinction is not a technical one: the extensions of the two modes do
+ * not overlap, so the file alone would settle it. It is kept because the two
+ * promise different things, and which promise was made should be visible
+ * before the file is chosen rather than inferred from the result afterwards.
+ */
+export type UploadMode = 'model' | 'estimate';
+
+/** What each mode is called wherever a person reads about it. */
+export const MODE_NAMES: Record<UploadMode, string> = {
+  model: 'Upload a model',
+  estimate: 'Estimate from a drawing',
+};
 
 /**
  * What is accepted, by the name a person would use for it.
@@ -20,23 +47,27 @@
  * now, which makes them impossible to disagree rather than merely tested.
  */
 export const SUPPORTED_FORMATS = [
-  { name: 'STEP', extensions: ['.step', '.stp'] },
-  { name: 'IGES', extensions: ['.iges', '.igs'] },
-  { name: 'STL', extensions: ['.stl'] },
-  { name: 'OBJ', extensions: ['.obj'] },
-  { name: 'PLY', extensions: ['.ply'] },
-  { name: 'glTF', extensions: ['.glb', '.gltf'] },
+  { name: 'STEP', mode: 'model', extensions: ['.step', '.stp'] },
+  { name: 'IGES', mode: 'model', extensions: ['.iges', '.igs'] },
+  { name: 'STL', mode: 'model', extensions: ['.stl'] },
+  { name: 'OBJ', mode: 'model', extensions: ['.obj'] },
+  { name: 'PLY', mode: 'model', extensions: ['.ply'] },
+  { name: 'glTF', mode: 'model', extensions: ['.glb', '.gltf'] },
   // A drawing rather than a model, and read as one: a turned part is
   // reconstructed from its profile and centre line, and labelled `derived` so
   // that nothing it produces is taken for a part somebody modelled. See
   // ARCHITECTURE.md section 12.
-  { name: 'DXF', extensions: ['.dxf'] },
+  { name: 'DXF', mode: 'estimate', extensions: ['.dxf'] },
   // The same drawing after it was printed. It keeps the geometry -- a line is
   // still a line, with coordinates -- and loses only the names for things.
-  { name: 'PDF', extensions: ['.pdf'] },
+  { name: 'PDF', mode: 'estimate', extensions: ['.pdf'] },
   // And a picture of one, which keeps nothing but dark pixels. Named as a
   // group: nobody chooses between PNG and TIFF, they upload what they have.
-  { name: 'images', extensions: ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp'] },
+  {
+    name: 'images',
+    mode: 'estimate',
+    extensions: ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp'],
+  },
 ] as const;
 
 /**
@@ -68,6 +99,43 @@ export const SUPPORTED_EXTENSIONS: readonly string[] = SUPPORTED_FORMATS.flatMap
 export const SUPPORTED_FORMAT_NAMES: readonly string[] = SUPPORTED_FORMATS.map(
   (format) => format.name,
 );
+
+/** The formats one mode accepts, in the order they are listed above. */
+export function formatsFor(mode: UploadMode) {
+  return SUPPORTED_FORMATS.filter((format) => format.mode === mode);
+}
+
+/**
+ * What to put in a file picker's `accept`.
+ *
+ * Narrowing the picker is half of what makes the modes separate: the other
+ * mode's files are not offered, so choosing the wrong one takes deliberate
+ * effort rather than being the default.
+ */
+export function extensionsFor(mode: UploadMode): readonly string[] {
+  return formatsFor(mode).flatMap((format) => [...format.extensions]);
+}
+
+/** For the line under a mode's heading. */
+export function formatNamesFor(mode: UploadMode): readonly string[] {
+  return formatsFor(mode).map((format) => format.name);
+}
+
+/**
+ * Which mode a file belongs to, or null if it belongs to neither.
+ *
+ * Used to catch a file chosen in the wrong mode, and to say which mode it
+ * should have gone to. Never used to pick the mode on the uploader's behalf:
+ * silently doing the other operation is exactly what having two modes is meant
+ * to stop.
+ */
+export function modeForFile(filename: string): UploadMode | null {
+  const extension = extensionOf(filename);
+  const format = SUPPORTED_FORMATS.find((candidate) =>
+    (candidate.extensions as readonly string[]).includes(extension),
+  );
+  return format?.mode ?? null;
+}
 
 type NativeKind = 'part' | 'assembly' | 'drawing';
 
@@ -157,10 +225,37 @@ function nativeMessage(extension: string, format: NativeFormat): string {
   return `${extension} is ${source} ${format.kind} file, which needs a commercial SDK to read. Export it to STEP and upload that.`;
 }
 
-export function rejectionReason(filename: string): string | null {
+/**
+ * A file that is accepted, but not by the mode it was offered to.
+ *
+ * Worth its own sentence rather than the generic list: the person is holding
+ * something this platform can read, and the only thing wrong is which of the
+ * two operations they started. Naming the other one is the whole answer.
+ */
+function wrongModeMessage(extension: string, chosen: UploadMode): string {
+  if (chosen === 'estimate') {
+    return `${extension} is a 3D model, not a drawing — there is nothing in it to estimate. Open it with “${MODE_NAMES.model}”, which reports the geometry the file already contains.`;
+  }
+
+  return `${extension} is a drawing, not a 3D model. Read it with “${MODE_NAMES.estimate}”, which reconstructs a turned part from it and says what it assumed.`;
+}
+
+/**
+ * Why this file cannot be uploaded, or null if it can.
+ *
+ * `mode` is which operation is being attempted. Left out, the question is only
+ * "can this platform read it at all", which is what the converter's own
+ * dispatch asks. Passed, a file belonging to the other mode is turned away
+ * too -- accepting it would mean quietly doing the operation the uploader did
+ * not choose.
+ */
+export function rejectionReason(filename: string, mode?: UploadMode): string | null {
   const extension = extensionOf(filename);
 
-  if (SUPPORTED_EXTENSIONS.includes(extension)) return null;
+  if (SUPPORTED_EXTENSIONS.includes(extension)) {
+    if (!mode || modeForFile(filename) === mode) return null;
+    return wrongModeMessage(extension, mode);
+  }
 
   const native = NATIVE_FORMATS[extension];
   if (native) return nativeMessage(extension, native);
@@ -173,5 +268,8 @@ export function rejectionReason(filename: string): string | null {
     return `${extension} needs a licensed library to read. Save the same drawing as DXF, which every application that writes ${extension} can also write.`;
   }
 
-  return `${extension || 'that file type'} is not supported. Upload one of: ${SUPPORTED_EXTENSIONS.join(', ')}.`;
+  // Listing the other mode's extensions here would be an invitation to try
+  // them in a mode that will refuse them.
+  const offered = mode ? extensionsFor(mode) : SUPPORTED_EXTENSIONS;
+  return `${extension || 'that file type'} is not supported. Upload one of: ${offered.join(', ')}.`;
 }

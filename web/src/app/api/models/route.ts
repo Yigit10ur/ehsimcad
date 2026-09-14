@@ -12,6 +12,13 @@ export const dynamic = 'force-dynamic';
 
 const createSchema = z.object({
   name: z.string().min(1).max(200),
+  /**
+   * Which of the two operations this upload is. Required, and not worked out
+   * from the file: the extension would agree with it today, but what belongs
+   * in the row is what the uploader chose, and a client that cannot say which
+   * has not asked them.
+   */
+  mode: z.enum(['model', 'estimate']),
   /** Where the model goes. Defaults to the uploader's own project. */
   projectId: z.string().uuid().optional(),
   description: z.string().max(2000).optional(),
@@ -62,6 +69,7 @@ export async function POST(request: Request) {
 
   const {
     name,
+    mode,
     description,
     projectId: requested,
     filename,
@@ -70,7 +78,10 @@ export async function POST(request: Request) {
     lengthMm,
   } = body.data;
 
-  const rejection = rejectionReason(filename);
+  // Checked against the mode as well as against the platform: a drawing sent
+  // to the model mode is a file this could read, being asked for the operation
+  // its uploader did not choose.
+  const rejection = rejectionReason(filename, mode);
   if (rejection) return NextResponse.json({ error: rejection }, { status: 415 });
 
   const limit = env().MAX_UPLOAD_MB * 1024 * 1024;
@@ -108,6 +119,7 @@ export async function POST(request: Request) {
       sourceFilename: filename,
       sourceFormat: formatOf(filename),
       sourceSizeBytes: sizeBytes,
+      mode,
       // Kept only where it means something. A length sent with a STEP file is
       // a mistake or a probe; either way it must not reach the converter.
       sourceLengthMm: lengthNeeded(filename) === 'none' ? null : (lengthMm ?? null),

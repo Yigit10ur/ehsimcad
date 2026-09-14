@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 
 import { RevisionUpload } from '@/components/catalogue/RevisionUpload';
 import { ModelWorkspace } from '@/components/viewer/ModelWorkspace';
+import { modeOf } from '@/lib/models';
 import { canWrite, currentUser, readableModel } from '@/lib/session';
 import { presignDownload } from '@/lib/storage';
 
@@ -100,7 +101,13 @@ export default async function ModelPage({ params, searchParams }: Props) {
 
           {version && <span>{version.sourceFormat.toUpperCase()}</span>}
 
-          {writable && <RevisionUpload modelId={model.id} converting={converting} />}
+          {writable && (
+            <RevisionUpload
+              modelId={model.id}
+              mode={modeOf(versions)}
+              converting={converting}
+            />
+          )}
         </div>
       </header>
 

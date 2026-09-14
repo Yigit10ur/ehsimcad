@@ -30,6 +30,17 @@ export const emailTokenPurposeEnum = pgEnum('email_token_purpose', [
   'password_reset',
   'email_verification',
 ]);
+/**
+ * Which of the two operations an upload was.
+ *
+ * Stored rather than worked out from the file extension, even though the
+ * extension would settle it today. What is recorded here is what the uploader
+ * asked for, and that stays true if the format lists ever move: a row saying
+ * `estimate` means somebody chose to have a part guessed at, which is what the
+ * catalogue marks and what every number in the result has to be read against.
+ */
+export const uploadModeEnum = pgEnum('upload_mode', ['model', 'estimate']);
+
 export const conversionStatusEnum = pgEnum('conversion_status', [
   // A version exists before its file does: the row is created first so the
   // upload has a key to write to. Only once the browser reports the upload
@@ -156,6 +167,13 @@ export const modelVersions = pgTable(
      */
     sourceFilename: text('source_filename'),
     sourceFormat: text('source_format').notNull(),
+    /**
+     * Which mode this upload was made in. Every version of a model shares the
+     * one its first version was made in: a model is either something that was
+     * opened or something that was estimated, and a revision does not change
+     * which. `lib/models.ts` is where that is read back.
+     */
+    mode: uploadModeEnum('mode').notNull().default('model'),
     sourceSizeBytes: bigint('source_size_bytes', { mode: 'number' }).notNull(),
     /**
      * How long the part is along its own axis, in millimetres, when the file

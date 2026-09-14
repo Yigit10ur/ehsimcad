@@ -3,14 +3,30 @@
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 
-import { lengthNeeded } from '@/lib/formats';
+import { extensionsFor, lengthNeeded, rejectionReason, type UploadMode } from '@/lib/formats';
 import { stageLabel, uploadCadFile, type UploadStage } from '@/lib/upload';
 
 import { LengthPrompt } from './LengthPrompt';
 
 export type Destination = { id: string; name: string };
 
-export function UploadForm({ destinations }: { destinations: Destination[] }) {
+/**
+ * The half of an upload that both modes share.
+ *
+ * Opening a model and estimating one from a drawing are presented as two
+ * separate operations, on two pages, in the uploader's own words. What they are
+ * not is two upload implementations: the presigned PUT, the three stages and
+ * the queueing call are one function (`lib/upload.ts`) and this is one form.
+ * The mode changes which files the picker offers, what the button says, and
+ * what a wrong file is told -- not how the file travels.
+ */
+export function UploadForm({
+  destinations,
+  mode,
+}: {
+  destinations: Destination[];
+  mode: UploadMode;
+}) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<UploadStage>('idle');
@@ -40,8 +56,10 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
     setError(null);
 
     try {
-      await uploadCadFile(file, { projectId }, setStage, lengthMm);
-      router.refresh();
+      await uploadCadFile(file, { projectId, mode }, setStage, lengthMm);
+      // Back to the catalogue, which is where the conversion can be watched:
+      // this page has done its one job and has nothing to show afterwards.
+      router.push('/');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -72,7 +90,7 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
           onClick={() => input.current?.click()}
           className="rounded-md bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:bg-slate-300 disabled:shadow-none"
         >
-          {stageLabel(stage, 'Upload model')}
+          {stageLabel(stage, mode === 'estimate' ? 'Choose a drawing' : 'Choose a model file')}
         </button>
 
         {/* Only worth asking when there is a choice to make. */}
@@ -96,10 +114,26 @@ export function UploadForm({ destinations }: { destinations: Destination[] }) {
       <input
         ref={input}
         type="file"
+        accept={extensionsFor(mode).join(',')}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (!file) return;
+
+          /*
+           * Refused here rather than on the way out, so that a file this mode
+           * will not take is never asked questions about itself first. A
+           * picture chosen in the model mode would otherwise be asked how long
+           * the part is, and only then turned away.
+           */
+          const rejection = rejectionReason(file.name, mode);
+          if (rejection) {
+            setError(rejection);
+            event.target.value = '';
+            return;
+          }
+
+          setError(null);
           if (lengthNeeded(file.name) === 'none') void upload(file);
           else setWaiting(file);
         }}

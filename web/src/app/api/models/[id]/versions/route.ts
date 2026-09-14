@@ -4,7 +4,15 @@ import { z } from 'zod';
 
 import { db, schema } from '@/db';
 import { env } from '@/lib/env';
-import { extensionOf, formatOf, lengthNeeded, rejectionReason } from '@/lib/formats';
+import {
+  MODE_NAMES,
+  extensionOf,
+  formatOf,
+  lengthNeeded,
+  modeForFile,
+  rejectionReason,
+} from '@/lib/formats';
+import { modeOf } from '@/lib/models';
 import { currentUser, writableModel } from '@/lib/session';
 import { presignUpload, storageKeys } from '@/lib/storage';
 
@@ -51,18 +59,44 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const model = await writableModel(id, user.id);
   if (!model) return NextResponse.json({ error: 'not found' }, { status: 404 });
 
-  const [latest] = await db
-    .select({ versionNo: schema.modelVersions.versionNo })
+  // The whole list rather than only the last of them: the latest gives the
+  // next number, and the first gives the mode every version of this model
+  // shares.
+  const versions = await db
+    .select({
+      versionNo: schema.modelVersions.versionNo,
+      mode: schema.modelVersions.mode,
+    })
     .from(schema.modelVersions)
     .where(eq(schema.modelVersions.modelId, model.id))
-    .orderBy(desc(schema.modelVersions.versionNo))
-    .limit(1);
+    .orderBy(desc(schema.modelVersions.versionNo));
+
+  /*
+   * A revision cannot change what kind of thing the model is. The mode is not
+   * taken from the request for the same reason: which operation this model
+   * came from was settled by its first upload, and a revision that switched it
+   * would leave the versions of one model disagreeing about whether their
+   * numbers were measured or guessed.
+   *
+   * Said in its own words rather than through `rejectionReason`, because the
+   * answer here is not "use the other mode on this file" -- it is "that file
+   * belongs to a different model".
+   */
+  const mode = modeOf(versions);
+  if (modeForFile(filename) !== mode) {
+    const error =
+      mode === 'estimate'
+        ? `“${model.name}” was estimated from a drawing, so a revision of it is another drawing. To open this file as it is, upload it as a new model with “${MODE_NAMES.model}”.`
+        : `“${model.name}” is a model, so a revision of it is another model file. To have a part estimated from this drawing, start a new model with “${MODE_NAMES.estimate}”.`;
+    return NextResponse.json({ error }, { status: 415 });
+  }
 
   const [version] = await db
     .insert(schema.modelVersions)
     .values({
       modelId: model.id,
-      versionNo: (latest?.versionNo ?? 0) + 1,
+      versionNo: (versions[0]?.versionNo ?? 0) + 1,
+      mode,
       sourceKey: '',
       sourceFilename: filename,
       sourceFormat: formatOf(filename),

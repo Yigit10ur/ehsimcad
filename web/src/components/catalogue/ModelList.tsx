@@ -117,7 +117,14 @@ export function ModelList({
       <div className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
         <p className="text-sm text-slate-600">No models yet.</p>
         <p className="pt-1 text-xs text-slate-500">
-          Upload a STEP file, or open the{' '}
+          <Link href="/upload" className="text-blue-600 hover:underline">
+            Upload a model
+          </Link>
+          ,{' '}
+          <Link href="/estimate" className="text-blue-600 hover:underline">
+            estimate one from a drawing
+          </Link>
+          , or open the{' '}
           <Link href="/sample" className="text-blue-600 hover:underline">
             bundled sample
           </Link>
@@ -140,18 +147,36 @@ export function ModelList({
               className="group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-slate-50"
             >
               <div className="min-w-0 flex-1">
-                {openable ? (
-                  <Link
-                    href={`/models/${model.id}`}
-                    className="block truncate text-sm font-medium text-slate-900 hover:text-blue-700"
-                  >
-                    {model.name}
-                  </Link>
-                ) : (
-                  <span className="block truncate text-sm font-medium text-slate-500">
-                    {model.name}
-                  </span>
-                )}
+                <div className="flex min-w-0 items-center gap-2">
+                  {openable ? (
+                    <Link
+                      href={`/models/${model.id}`}
+                      className="truncate text-sm font-medium text-slate-900 hover:text-blue-700"
+                    >
+                      {model.name}
+                    </Link>
+                  ) : (
+                    <span className="truncate text-sm font-medium text-slate-500">
+                      {model.name}
+                    </span>
+                  )}
+
+                  {/*
+                    The one marker in this list that is not a status, and the
+                    one worth being louder than the dots: status says what is
+                    happening for a minute, this says how every number in the
+                    model has to be read for as long as it exists. Next to the
+                    name because that is what gets copied into an email.
+                  */}
+                  {latest?.mode === 'estimate' && (
+                    <span
+                      title="Reconstructed from a drawing rather than read from a model"
+                      className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800"
+                    >
+                      estimate
+                    </span>
+                  )}
+                </div>
 
                 <p className="truncate pt-0.5 text-xs text-slate-500">
                   {projectName.has(model.projectId) && (

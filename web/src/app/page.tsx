@@ -3,11 +3,10 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { ModelList, type ModelWithVersions } from '@/components/catalogue/ModelList';
-import { UploadForm } from '@/components/catalogue/UploadForm';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { VerifyBanner } from '@/components/auth/VerifyBanner';
 import { db, schema } from '@/db';
-import { SUPPORTED_FORMAT_NAMES } from '@/lib/formats';
+import { MODE_NAMES, SUPPORTED_FORMAT_NAMES } from '@/lib/formats';
 import { deletableIds } from '@/lib/models';
 import { projectsFor } from '@/lib/projects';
 import {
@@ -170,7 +169,34 @@ export default async function Home() {
             </p>
           </div>
 
-          <UploadForm destinations={destinations} />
+          {/*
+            Two entry points rather than one button with a choice inside it.
+            The operations promise different things, and a control that treats
+            them as two settings of one action says they are the same thing
+            differently configured. Different verbs, on purpose: one brings a
+            model, the other asks for one to be worked out.
+          */}
+          {destinations.length === 0 ? (
+            <p className="text-xs text-slate-500">
+              You have view-only access to the projects you are in, so there is nowhere to
+              upload to.
+            </p>
+          ) : (
+            <div className="flex shrink-0 items-center gap-2">
+              <Link
+                href="/upload"
+                className="rounded-md bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+              >
+                {MODE_NAMES.model}
+              </Link>
+              <Link
+                href="/estimate"
+                className="rounded-md border border-slate-300 bg-white px-3.5 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+              >
+                {MODE_NAMES.estimate}
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Which project a model is in only means something once there is

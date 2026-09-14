@@ -3,13 +3,19 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-import { lengthNeeded } from '@/lib/formats';
+import { extensionsFor, lengthNeeded, rejectionReason, type UploadMode } from '@/lib/formats';
 import { stageLabel, uploadCadFile, type UploadStage } from '@/lib/upload';
 
 import { LengthPrompt } from './LengthPrompt';
 
 interface Props {
   modelId: string;
+  /**
+   * The mode this model was created in. A revision is always of the same kind
+   * as what it revises, so this is not a choice offered here -- it is what the
+   * picker is narrowed to, and what the server would enforce anyway.
+   */
+  mode: UploadMode;
   /** True while any version of this model is still queued or converting. */
   converting: boolean;
 }
@@ -21,7 +27,7 @@ interface Props {
  * a revision never takes away what someone was looking at -- the version
  * switcher in the header is the other half of this.
  */
-export function RevisionUpload({ modelId, converting }: Props) {
+export function RevisionUpload({ modelId, mode, converting }: Props) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<UploadStage>('idle');
@@ -42,7 +48,7 @@ export function RevisionUpload({ modelId, converting }: Props) {
     setError(null);
 
     try {
-      await uploadCadFile(file, { modelId }, setStage, lengthMm);
+      await uploadCadFile(file, { modelId, mode }, setStage, lengthMm);
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -89,10 +95,22 @@ export function RevisionUpload({ modelId, converting }: Props) {
       <input
         ref={input}
         type="file"
+        accept={extensionsFor(mode).join(',')}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (!file) return;
+
+          // Same reason as the catalogue's form: a file this model cannot take
+          // is not asked how long it is first.
+          const rejection = rejectionReason(file.name, mode);
+          if (rejection) {
+            setError(rejection);
+            event.target.value = '';
+            return;
+          }
+
+          setError(null);
           if (lengthNeeded(file.name) === 'none') void upload(file);
           else setWaiting(file);
         }}

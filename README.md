@@ -38,6 +38,9 @@ comes from the B-rep the CAD file actually contains.
 
 **Platform**
 
+- Two separate modes, chosen before the file is: open a model, or estimate one
+  from a drawing. They promise different things, so which one was used is
+  recorded and marked on everything it produces
 - Upload straight from the browser to object storage with a presigned URL
 - Conversion runs as a background worker off a database-backed queue
 - Every model belongs to a project, and every read and write is checked
@@ -159,6 +162,9 @@ raporlanan her sayı dosyanın gerçekten içerdiği B-rep'ten gelir.
 
 **Platform**
 
+- Dosyadan önce seçilen iki ayrı mod: bir modeli açmak, ya da bir çizimden
+  parça tahmin etmek. İkisi farklı şeyler vaat ettiği için hangisinin
+  kullanıldığı kaydedilir ve ürettiği her şeyin üzerinde görünür
 - Tarayıcıdan doğrudan nesne depolamaya presigned URL ile yükleme
 - Dönüştürme, veritabanı destekli bir kuyruktan beslenen arka plan worker'ında
 - Her model bir projeye ait ve her okuma/yazma buna karşı denetleniyor

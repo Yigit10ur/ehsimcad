@@ -33,7 +33,7 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-525 tests pass: 374 in `web` (vitest, against an in-process Postgres), 151 in
+537 tests pass: 386 in `web` (vitest, against an in-process Postgres), 151 in
 `converter` (pytest). The geometry ones skip on a machine with no OCCT
 installed, which is most development machines, but no longer in CI:
 `geometry.yml` installs a kernel, proves it can be called, and runs them. That
@@ -594,9 +594,21 @@ there, and then the work: distance between two axes is one formula when they
 are parallel and another when they are skew, and mixing them up is silently
 wrong.
 
-**No thumbnails or search.** `thumbnail_key` exists and is unused. Searching
-is the one of the two that is felt: the catalogue is paged now, so a model
-that is not on the current page can only be found by walking to it.
+**No thumbnails.** `thumbnail_key` exists and is unused.
+
+**Search is a substring match, deliberately.** It looks at the model's name,
+its description, and the name of the file each version was uploaded from. The
+third is the one that earns the join: a model's name is often the one the CAD
+file declares rather than the one it was saved under, so `BK-09.STEP` -- what
+the uploader remembers, because it is what they sent -- is not what the
+catalogue is showing them.
+
+`ILIKE '%term%'` rather than full-text search, because part codes are what
+gets searched for and `BK-09` is not a word: a text search would tokenise it,
+and a search for `BK` would then miss it. What a leading wildcard costs is an
+index it cannot use, so a search scans the models of the projects the reader
+can see. Bounded by that, and the next step if it ever stops being fast enough
+is a trigram index -- not a different kind of matching.
 
 The paging is by cursor rather than by offset, and the ordering is why. New
 models arrive at the top of a newest-first list, so on an offset the rows slide

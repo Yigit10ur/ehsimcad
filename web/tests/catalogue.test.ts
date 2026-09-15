@@ -31,7 +31,9 @@ import {
   countModels,
   decodeCursor,
   encodeCursor,
+  likePattern,
   pageOfModels,
+  searchTerm,
 } from '@/lib/catalogue';
 
 const db = () => holder.db;
@@ -61,6 +63,26 @@ async function makeModel(projectId: string, name: string, minutesOld: number) {
     .returning();
 
   return model;
+}
+
+/** A version of a model, which is where the uploaded file name lives. */
+async function makeVersion(modelId: string, filename: string) {
+  await db()
+    .insert(schema.modelVersions)
+    .values({
+      modelId,
+      versionNo: 1,
+      sourceKey: `key/${filename}`,
+      sourceFilename: filename,
+      sourceFormat: filename.split('.').pop() ?? 'step',
+      sourceSizeBytes: 1,
+    });
+}
+
+/** The names a search finds, newest first. */
+async function found(projectIds: string[], term: string): Promise<string[]> {
+  const page = await pageOfModels({ projectIds, search: searchTerm(term) });
+  return page.models.map((model) => model.name);
 }
 
 /** Walks `older` to the end, returning every name it saw, in order. */
@@ -290,5 +312,148 @@ describe('counting', () => {
 
     expect(await countModels([mine.id])).toBe(1);
     expect(await countModels([])).toBe(0);
+  });
+});
+
+
+describe('what a typed term means', () => {
+  it('is nothing when nothing was typed', () => {
+    // A form submits an empty field as an empty string, and an empty
+    // catalogue is the wrong answer to pressing enter by accident.
+    expect(searchTerm(undefined)).toBeNull();
+    expect(searchTerm('')).toBeNull();
+    expect(searchTerm('   ')).toBeNull();
+  });
+
+  it('is the term without the whitespace around it', () => {
+    expect(searchTerm('  BK-09 ')).toBe('BK-09');
+  });
+
+  it('does not carry more than a part name is', () => {
+    expect(searchTerm('x'.repeat(500))).toHaveLength(100);
+  });
+
+  it('takes the wildcards literally', () => {
+    // `%` and `_` mean something to ILIKE and nothing to whoever typed them.
+    expect(likePattern('BK_09')).toBe('%BK\\_09%');
+    expect(likePattern('50%')).toBe('%50\\%%');
+    // The backslash first, or the escapes added after it get escaped in turn.
+    expect(likePattern('a\\b')).toBe('%a\\\\b%');
+  });
+});
+
+describe('searching the catalogue', () => {
+  it('finds a model by its name, whatever case it was typed in', async () => {
+    const project = await makeProject('p');
+    await makeModel(project.id, 'Flanged Shaft', 1);
+    await makeModel(project.id, 'Base Plate', 2);
+
+    expect(await found([project.id], 'shaft')).toEqual(['Flanged Shaft']);
+    expect(await found([project.id], 'FLANGED')).toEqual(['Flanged Shaft']);
+  });
+
+  it('finds a model by its description', async () => {
+    const project = await makeProject('p');
+    const [model] = await db()
+      .insert(schema.models)
+      .values({
+        projectId: project.id,
+        name: 'M-1',
+        description: 'the coupling for the servo',
+        createdAt: new Date(EPOCH),
+      })
+      .returning();
+    await makeModel(project.id, 'M-2', 1);
+
+    expect(await found([project.id], 'servo')).toEqual([model.name]);
+  });
+
+  it('finds a model by the name of the file it was uploaded from', async () => {
+    /*
+     * The one that earns the join. A model's name is often the one the CAD
+     * file declares rather than the one it was saved under, so the thing the
+     * uploader remembers -- because it is what they sent -- is not the thing
+     * the catalogue is showing them.
+     */
+    const project = await makeProject('p');
+    const declared = await makeModel(project.id, 'SERVO COUPLING ASSY', 1);
+    await makeVersion(declared.id, 'BK-09.STEP');
+    await makeModel(project.id, 'something else', 2);
+
+    expect(await found([project.id], 'BK-09')).toEqual(['SERVO COUPLING ASSY']);
+  });
+
+  it('treats a typed wildcard as a character, not as everything', async () => {
+    const project = await makeProject('p');
+    await makeModel(project.id, 'BK_09', 1);
+    await makeModel(project.id, 'BK-09', 2);
+    await makeModel(project.id, 'unrelated', 3);
+
+    // `_` matches any single character in ILIKE, so without escaping this
+    // would also return BK-09.
+    expect(await found([project.id], 'BK_09')).toEqual(['BK_09']);
+    // And this would return the whole catalogue.
+    expect(await found([project.id], '%')).toEqual([]);
+  });
+
+  it('searches only what the reader may see', async () => {
+    const mine = await makeProject('mine');
+    const theirs = await makeProject('theirs');
+    await makeModel(mine.id, 'shaft of mine', 1);
+    await makeModel(theirs.id, 'shaft of theirs', 2);
+
+    expect(await found([mine.id], 'shaft')).toEqual(['shaft of mine']);
+  });
+
+  it('finds nothing without claiming the catalogue is empty', async () => {
+    const project = await makeProject('p');
+    await makeModel(project.id, 'a model', 1);
+
+    const page = await pageOfModels({ projectIds: [project.id], search: 'nothing' });
+
+    expect(page.models).toEqual([]);
+    expect(page.older).toBeNull();
+    expect(page.newer).toBeNull();
+  });
+});
+
+describe('a search that runs past one page', () => {
+  it('pages through the results and nothing else', async () => {
+    const project = await makeProject('p');
+    const matching: string[] = [];
+    for (let i = 0; i < PAGE_SIZE + 5; i += 1) {
+      await makeModel(project.id, `shaft-${i}`, i * 2);
+      matching.push(`shaft-${i}`);
+      // Interleaved, so a page of results is not just a slice of the
+      // catalogue that happens to line up.
+      await makeModel(project.id, `plate-${i}`, i * 2 + 1);
+    }
+
+    const first = await pageOfModels({ projectIds: [project.id], search: 'shaft' });
+    expect(first.models).toHaveLength(PAGE_SIZE);
+    expect(first.older).not.toBeNull();
+
+    const second = await pageOfModels({
+      projectIds: [project.id],
+      search: 'shaft',
+      after: first.older,
+    });
+
+    const names = [...first.models, ...second.models].map((model) => model.name);
+    expect(names).toEqual(matching);
+    expect(names.every((name) => name.startsWith('shaft-'))).toBe(true);
+  });
+
+  it('counts the results rather than the catalogue', async () => {
+    const project = await makeProject('p');
+    for (let i = 0; i < PAGE_SIZE + 5; i += 1) {
+      await makeModel(project.id, `shaft-${i}`, i * 2);
+      await makeModel(project.id, `plate-${i}`, i * 2 + 1);
+    }
+
+    // The heading would otherwise promise more results than the list can
+    // reach.
+    expect(await countModels([project.id], 'shaft')).toBe(PAGE_SIZE + 5);
+    expect(await countModels([project.id], null)).toBe((PAGE_SIZE + 5) * 2);
   });
 });

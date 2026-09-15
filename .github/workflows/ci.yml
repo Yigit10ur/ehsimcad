@@ -48,9 +48,11 @@ jobs:
           cache: pip
           cache-dependency-path: converter/pyproject.toml
 
-      # OCCT is not installed here on purpose: the geometry path is covered by
-      # the Docker build, and pulling a ~500 MB wheel into every run would make
-      # CI slow enough to start skipping it.
+      # OCCT is not installed here on purpose: pulling a ~500 MB wheel into
+      # every run would make CI slow enough to start skipping it. The tests
+      # that need a kernel skip here and are run by `geometry.yml`, which
+      # installs one and refuses to pass without it. This comment used to
+      # claim the Docker build covered them, and nothing built it.
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .

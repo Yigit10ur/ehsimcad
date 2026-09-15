@@ -161,6 +161,26 @@ class TestWrittenFile:
 
         assert "MILLI" in text.upper()
 
+    def test_an_export_leaves_the_session_as_it_found_it(self, tmp_path):
+        """The write settings belong to OCCT, not to the writer that reads them.
+
+        They outlive the call, and the worker converts a whole queue in one
+        process, so a product name left behind is the name the next thing to
+        write a STEP file uses. That is not hypothetical: it is how a box with
+        no name of its own came out of a later test calling itself
+        `plain_shaft_ESTIMATED`, and it only showed up once these tests were
+        run with a kernel present.
+        """
+        from OCP.Interface import Interface_Static
+
+        watched = ("write.step.unit", "write.step.schema", "write.step.product.name")
+        before = {key: Interface_Static.CVal_s(key) for key in watched}
+
+        drawing.convert(FIXTURES / "stepped_shaft.dxf", tmp_path / "model.glb")
+
+        after = {key: Interface_Static.CVal_s(key) for key in watched}
+        assert after == before
+
     def test_a_failed_export_does_not_cost_the_model(self, tmp_path, monkeypatch):
         """The glb is what was asked for. The STEP is an extra on top of it.
 

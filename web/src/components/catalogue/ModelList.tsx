@@ -61,6 +61,7 @@ export function ModelList({
   models,
   projects = [],
   deletable = [],
+  search = null,
 }: {
   models: ModelWithVersions[];
   /** Empty when there is only one project: the label would say nothing. */
@@ -71,6 +72,12 @@ export function ModelList({
    * that fails.
    */
   deletable?: string[];
+  /**
+   * The term these models were found by, when they were. Only the empty state
+   * uses it, and only because "no models yet" is the wrong thing to tell
+   * somebody whose catalogue is full and whose search missed.
+   */
+  search?: string | null;
 }) {
   const router = useRouter();
   const projectName = new Map(projects.map((project) => [project.id, project.name]));
@@ -110,6 +117,21 @@ export function ModelList({
     } finally {
       setBusy(null);
     }
+  }
+
+  if (models.length === 0 && search) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
+        <p className="text-sm text-slate-600">Nothing matches “{search}”.</p>
+        <p className="pt-1 text-xs text-slate-500">
+          Names, descriptions and uploaded file names are searched.{' '}
+          <Link href="/" className="text-blue-600 hover:underline">
+            Show everything
+          </Link>
+          .
+        </p>
+      </div>
+    );
   }
 
   if (models.length === 0) {

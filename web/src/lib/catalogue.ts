@@ -17,6 +17,11 @@
  * happens -- and a page boundary between two rows with equal timestamps would
  * either repeat one or skip one. The id breaks the tie, and it breaks it the
  * same way the ordering does.
+ *
+ * A search narrows the list before it is paged, so a page is a page of
+ * results. The cursor belongs to whichever list it was issued against: change
+ * the term and the old cursor names a position in a list that no longer
+ * exists, which is why the search form sends the term without them.
  */
 
 import { and, asc, desc, inArray, sql } from 'drizzle-orm';
@@ -74,8 +79,77 @@ export function decodeCursor(value: string | undefined | null): Cursor | null {
   return { createdAt, id };
 }
 
+/**
+ * A typed search term, or null for no search at all.
+ *
+ * Whitespace is not a search: a form submits an empty field as an empty
+ * string, and treating that as a term would show an empty catalogue to
+ * somebody who pressed enter by accident.
+ *
+ * The length cap is not about the database. It is about what comes back into
+ * the page as the thing that was searched for, and into the URL that carries
+ * it -- neither has any use for a term longer than a part name.
+ */
+export function searchTerm(raw: string | undefined | null): string | null {
+  const trimmed = (raw ?? '').trim();
+  return trimmed ? trimmed.slice(0, 100) : null;
+}
+
+/**
+ * The term as a LIKE pattern, with its wildcards taken literally.
+ *
+ * `%` and `_` mean something to ILIKE and nothing to the person who typed
+ * them. A part called `BK_09` searched for as `BK_09` would otherwise match
+ * `BK-09` and `BKX09` as well, and a search for `%` would match the entire
+ * catalogue -- a result that looks like a bug in the search rather than like
+ * the search working exactly as specified.
+ *
+ * Backslash first, or the escapes added after it would be escaped in turn.
+ */
+export function likePattern(term: string): string {
+  const literal = term.replace(/\\/g, '\\\\').replace(/[%_]/g, (char) => `\\${char}`);
+  return `%${literal}%`;
+}
+
 function cursorOf(model: { createdAt: Date; id: string }): Cursor {
   return { createdAt: model.createdAt, id: model.id };
+}
+
+/**
+ * What a search term is matched against.
+ *
+ * Three places, and the third is the one that earns its keep. A model's name
+ * is often the one the CAD file declares rather than the one the file was
+ * saved under, so somebody looking for `BK-09.STEP` -- which is what they
+ * remember, because it is what they sent -- would not find it by name at all.
+ *
+ * `ILIKE '%term%'` rather than full-text search. Part codes are what gets
+ * searched for here, and `BK-09` is not a word: a text search would tokenise
+ * it, and a search for `BK` would then miss it. Substring matching is what was
+ * meant. A leading wildcard cannot use a plain index, so this scans the models
+ * of the projects the reader can see -- bounded by that, and the honest next
+ * step if it ever stops being fast enough is a trigram index rather than a
+ * different kind of matching.
+ */
+function matching(term: string) {
+  const pattern = likePattern(term);
+
+  // The subquery's columns are written out rather than interpolated. Passing
+  // a column object here renders it with the *outer* query's alias -- the
+  // correlated `exists` came out reading `models.model_id`, which is a column
+  // that does not exist and said so at runtime rather than at compile time.
+  // Only the correlation and the pattern are interpolated, because those are
+  // the two that have to be.
+  return sql`(
+    ${schema.models.name} ilike ${pattern}
+    or ${schema.models.description} ilike ${pattern}
+    or exists (
+      select 1
+      from model_versions
+      where model_versions.model_id = ${schema.models.id}
+        and model_versions.source_filename ilike ${pattern}
+    )
+  )`;
 }
 
 export interface Page {
@@ -98,24 +172,30 @@ export async function pageOfModels(options: {
   projectIds: string[];
   after?: Cursor | null;
   before?: Cursor | null;
+  /** Narrows the list before it is paged, so a page is a page of results. */
+  search?: string | null;
 }): Promise<Page> {
   const { projectIds } = options;
   if (projectIds.length === 0) return { models: [], older: null, newer: null };
 
   const after = options.after ?? null;
   const before = after ? null : (options.before ?? null);
+  const search = options.search ?? null;
 
-  const visible = inArray(schema.models.projectId, projectIds);
   const position = sql`(${schema.models.createdAt}, ${schema.models.id})`;
 
   // Row-value comparison rather than `created_at < x OR (created_at = x AND
   // id < y)`: it says the same thing, and it is the form the index on
   // (project_id, created_at desc, id desc) can walk.
-  const where = after
-    ? and(visible, sql`${position} < (${after.createdAt}::timestamptz, ${after.id}::uuid)`)
-    : before
-      ? and(visible, sql`${position} > (${before.createdAt}::timestamptz, ${before.id}::uuid)`)
-      : visible;
+  const where = and(
+    inArray(schema.models.projectId, projectIds),
+    search ? matching(search) : undefined,
+    after
+      ? sql`${position} < (${after.createdAt}::timestamptz, ${after.id}::uuid)`
+      : before
+        ? sql`${position} > (${before.createdAt}::timestamptz, ${before.id}::uuid)`
+        : undefined,
+  );
 
   // One more than a page, which is how the existence of a next page is known
   // without counting the rest of the table.
@@ -150,19 +230,30 @@ export async function pageOfModels(options: {
 }
 
 /**
- * How many models there are in total.
+ * How many models there are in total, or how many a search found.
  *
  * A second query, and worth it: the heading says how many models the user has
  * and a page of twenty-five cannot answer that. Counting only the rows the
- * user may read, by the same rule the page itself uses.
+ * user may read, by the same rule the page itself uses -- and through the same
+ * search filter, so the number and the list are answering the same question.
  */
-export async function countModels(projectIds: string[]): Promise<number> {
+export async function countModels(
+  projectIds: string[],
+  search?: string | null,
+): Promise<number> {
   if (projectIds.length === 0) return 0;
 
   const [row] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(schema.models)
-    .where(inArray(schema.models.projectId, projectIds));
+    .where(
+      and(
+        inArray(schema.models.projectId, projectIds),
+        // Counted through the same filter the page uses, or the heading would
+        // announce more results than the list can reach.
+        search ? matching(search) : undefined,
+      ),
+    );
 
   return row?.total ?? 0;
 }

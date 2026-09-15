@@ -10,6 +10,8 @@ import {
   decodeCursor,
   encodeCursor,
   pageOfModels,
+  searchTerm,
+  type Cursor,
   type Page,
 } from '@/lib/catalogue';
 import { MODE_NAMES, SUPPORTED_FORMAT_NAMES } from '@/lib/formats';
@@ -34,6 +36,7 @@ export const dynamic = 'force-dynamic';
 async function loadPage(
   userId: string,
   cursors: { after?: string; before?: string },
+  search: string | null,
 ): Promise<{ page: Page; total: number }> {
   // Make sure the user has somewhere to upload to, then read what they can
   // see -- not just that one project, or a model shared with them would be
@@ -44,10 +47,11 @@ async function loadPage(
   const [page, total] = await Promise.all([
     pageOfModels({
       projectIds,
+      search,
       after: decodeCursor(cursors.after),
       before: decodeCursor(cursors.before),
     }),
-    countModels(projectIds),
+    countModels(projectIds, search),
   ]);
 
   return { page, total };
@@ -81,14 +85,29 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/**
+ * A link to another page of the same list.
+ *
+ * The term travels with the cursor because the cursor only means anything
+ * against the list that term produced. Dropping it here would page a search
+ * result into the unfiltered catalogue, landing somewhere unrelated.
+ */
+function pageHref(cursor: Cursor, direction: 'after' | 'before', search: string | null) {
+  const params = new URLSearchParams();
+  if (search) params.set('q', search);
+  params.set(direction, encodeCursor(cursor));
+  return `/?${params.toString()}`;
+}
+
 export default async function Home({
   searchParams,
 }: {
   // Which page is in the address, so it survives a refresh, a bookmark and
   // the three-second poll the list runs while something is converting.
-  searchParams: Promise<{ after?: string; before?: string }>;
+  searchParams: Promise<{ after?: string; before?: string; q?: string }>;
 }) {
   const cursors = await searchParams;
+  const search = searchTerm(cursors.q);
 
   // redirect() reports itself by throwing, so it stays outside every try
   // block: caught, it would turn "please sign in" into "not configured".
@@ -112,7 +131,7 @@ export default async function Home({
   let deletable: string[];
   let verified = true;
   try {
-    ({ page, total } = await loadPage(user.id, cursors));
+    ({ page, total } = await loadPage(user.id, cursors, search));
     // Asked about this page's models only, which is the other half of what
     // paging bought: it was two queries for the whole catalogue before.
     deletable = [...(await deletableIds(page.models, user.id))];
@@ -189,14 +208,19 @@ export default async function Home({
             <p className="pt-1 text-xs text-slate-500">
               {/* The total, not this page's share of it: the heading answers
                   "how many models do I have", and a page of twenty-five
-                  cannot. */}
-              {total === 0
-                ? 'Nothing uploaded yet'
-                : `${total} model${total === 1 ? '' : 's'}`}
+                  cannot. Under a search it answers "how many did that find",
+                  which is the question actually being asked. */}
+              {search
+                ? `${total} result${total === 1 ? '' : 's'} for “${search}”`
+                : total === 0
+                  ? 'Nothing uploaded yet'
+                  : `${total} model${total === 1 ? '' : 's'}`}
               {total > PAGE_SIZE && (
                 <span className="text-slate-400"> · {page.models.length} shown</span>
               )}
-              <span className="text-slate-400"> · {SUPPORTED_FORMAT_NAMES.join(', ')}</span>
+              {!search && (
+                <span className="text-slate-400"> · {SUPPORTED_FORMAT_NAMES.join(', ')}</span>
+              )}
             </p>
           </div>
 
@@ -230,12 +254,46 @@ export default async function Home({
           )}
         </div>
 
+        {/*
+          A plain GET form, which is the whole of the mechanism: no state, no
+          effect, no debounce, and it works before any JavaScript has loaded.
+
+          It posts to `/` with only the term, so the cursors are dropped. That
+          is not a side effect to be tidied up later -- it is the correct
+          behaviour. A cursor names a position in the list it was issued
+          against, and a new term makes a different list.
+        */}
+        {(total > 0 || search) && (
+          <form action="/" method="get" className="flex items-center gap-2 pb-4">
+            <input
+              type="search"
+              name="q"
+              defaultValue={search ?? ''}
+              placeholder="Search by name, description or file name"
+              aria-label="Search models"
+              className="w-full max-w-sm rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400"
+            />
+            <button
+              type="submit"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              Search
+            </button>
+            {search && (
+              <Link href="/" className="text-xs text-slate-500 hover:text-slate-900">
+                clear
+              </Link>
+            )}
+          </form>
+        )}
+
         {/* Which project a model is in only means something once there is
             more than one to tell apart. */}
         <ModelList
           models={page.models}
           projects={projects.length > 1 ? projects : []}
           deletable={deletable}
+          search={search}
         />
 
         {/*
@@ -253,7 +311,7 @@ export default async function Home({
           <nav className="flex items-center justify-between pt-4 text-xs">
             {page.newer ? (
               <Link
-                href={`/?before=${encodeCursor(page.newer)}`}
+                href={pageHref(page.newer, 'before', search)}
                 className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-slate-600 transition-colors hover:bg-slate-100"
               >
                 ← Newer
@@ -264,7 +322,7 @@ export default async function Home({
 
             {page.older ? (
               <Link
-                href={`/?after=${encodeCursor(page.older)}`}
+                href={pageHref(page.older, 'after', search)}
                 className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-slate-600 transition-colors hover:bg-slate-100"
               >
                 Older →

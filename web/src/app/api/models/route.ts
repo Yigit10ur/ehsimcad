@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { db, schema } from '@/db';
-import { decodeCursor, encodeCursor, pageOfModels } from '@/lib/catalogue';
+import { decodeCursor, encodeCursor, pageOfModels, searchTerm } from '@/lib/catalogue';
 import { env } from '@/lib/env';
 import { extensionOf, formatOf, lengthNeeded, rejectionReason } from '@/lib/formats';
 import { canWrite, currentUser, personalProject, readableProjects } from '@/lib/session';
@@ -56,6 +56,11 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const page = await pageOfModels({
     projectIds,
+    // `q` narrows the list before it is paged. A cursor belongs to the list it
+    // was issued against, so pairing one with a different `q` pages a result
+    // set that no longer exists -- which is the caller's to get right, the
+    // same as it is in the browser's address bar.
+    search: searchTerm(params.get('q')),
     // A cursor this did not issue decodes to null, which asks for the first
     // page. The same answer a stale bookmark gets, and for the same reason.
     after: decodeCursor(params.get('after')),

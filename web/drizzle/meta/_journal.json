@@ -57,6 +57,13 @@
       "when": 1789366745990,
       "tag": "0007_strong_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789371706373,
+      "tag": "0008_productive_boomer",
+      "breakpoints": true
     }
   ]
 }

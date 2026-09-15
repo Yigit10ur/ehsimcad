@@ -78,7 +78,41 @@ export const storageKeys = {
     `${projectId}/${modelId}/${versionId}/metadata.json`,
   thumbnail: (projectId: string, modelId: string, versionId: string) =>
     `${projectId}/${modelId}/${versionId}/thumb.png`,
+  // Named for what it is rather than for the part it holds. The name the
+  // person downloading it sees is decided at that moment, from the model's
+  // own name -- see `estimatedStepFilename`.
+  step: (projectId: string, modelId: string, versionId: string) =>
+    `${projectId}/${modelId}/${versionId}/estimated.step`,
 };
+
+/**
+ * What an estimated STEP file is called once it is on somebody's disk.
+ *
+ * The word is in the name because the name is the first thing anybody reads,
+ * and because a file is renamed far less often than it is forwarded. It is not
+ * the only place the warning lives -- the product name and the file's own
+ * header carry it too -- but it is the one visible without opening anything.
+ *
+ * Folded to ASCII for the same reason the converter folds it: this goes into a
+ * Content-Disposition header, and a raw `şaft` there is decided by whichever
+ * encoding the browser guesses.
+ */
+export function estimatedStepFilename(modelName: string): string {
+  const folded = modelName.replace(/ı/g, 'i').replace(/İ/g, 'I');
+
+  const ascii = folded
+    .normalize('NFKD')
+    // Combining marks left behind by the decomposition above: `ş` has become
+    // `s` plus a cedilla, and only the `s` is wanted.
+    .replace(/[\u0300-\u036f]/g, '')
+    // Anything with no ASCII spelling, plus the characters a file name or a
+    // header cannot carry: quotes, separators, control characters.
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '');
+
+  return `${ascii || 'part'}.estimated.step`;
+}
 
 export async function presignUpload(key: string, contentType: string) {
   const config = env();
@@ -93,11 +127,29 @@ export async function presignUpload(key: string, contentType: string) {
   );
 }
 
-export async function presignDownload(key: string) {
+/**
+ * A short-lived URL for reading one object.
+ *
+ * `filename` makes it a download rather than something the browser decides
+ * what to do with, and names it. Left out for the files the viewer fetches and
+ * parses itself, which are never saved anywhere.
+ *
+ * The disposition rides in the signed query string, so a storage backend that
+ * ignores the parameter degrades to serving the object under its key's own
+ * name rather than failing -- `estimated.step`, which is still honest, just
+ * less useful in a folder of them.
+ */
+export async function presignDownload(key: string, filename?: string) {
   const config = env();
   return getSignedUrl(
     signer(),
-    new GetObjectCommand({ Bucket: config.STORAGE_BUCKET, Key: key }),
+    new GetObjectCommand({
+      Bucket: config.STORAGE_BUCKET,
+      Key: key,
+      ResponseContentDisposition: filename
+        ? `attachment; filename="${filename}"`
+        : undefined,
+    }),
     { expiresIn: config.STORAGE_URL_TTL_SECONDS },
   );
 }

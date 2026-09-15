@@ -161,6 +161,26 @@ class TestWrittenFile:
 
         assert "MILLI" in text.upper()
 
+    def test_a_failed_export_does_not_cost_the_model(self, tmp_path, monkeypatch):
+        """The glb is what was asked for. The STEP is an extra on top of it.
+
+        Trading a drawing that converted perfectly for a failure report,
+        because a second and optional output could not be written, is the
+        wrong way round. Nothing is claimed instead: no path comes back, so
+        no key is recorded and no download is offered.
+        """
+
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("the kernel refused")
+
+        monkeypatch.setattr(occt, "export_step", explode)
+
+        result = drawing.convert(FIXTURES / "stepped_shaft.dxf", tmp_path / "model.glb")
+
+        assert result.step_path is None
+        assert (tmp_path / "model.glb").exists()
+        assert result.metadata.geometry_source == "derived"
+
     def test_a_real_solid_is_not_re_exported(self, tmp_path):
         # The uploader already has this file. Handing back a copy of it would
         # dress a round trip up as the original.

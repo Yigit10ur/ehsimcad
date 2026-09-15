@@ -17,6 +17,7 @@ it would be quietly wrong.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +35,8 @@ from app.models import (
     TreeNode,
     Vec3,
 )
+
+logger = logging.getLogger("occt")
 
 
 def available() -> bool:
@@ -701,12 +704,25 @@ def build(
     # written into one file, and inventing those here would be guessing twice.
     step_path: Path | None = None
     if geometry_source == "derived" and derived is not None and len(leaves) == 1:
-        step_path = export_step(
-            leaves[0].shape,
-            out_glb.with_name("estimated.step"),
-            step_product_name(leaves[0].name),
-            step_description(derived, leaves[0].name),
-        )
+        try:
+            step_path = export_step(
+                leaves[0].shape,
+                out_glb.with_name("estimated.step"),
+                step_product_name(leaves[0].name),
+                step_description(derived, leaves[0].name),
+            )
+        except Exception:
+            # The glb and the metadata are what was asked for; the STEP is an
+            # extra offered on top of them. Letting a failure here throw would
+            # trade the whole model for a file the uploader did not ask for --
+            # a drawing that converted perfectly would be reported as failed
+            # because a second, optional output could not be written.
+            #
+            # Nothing is claimed instead: no key is recorded, so no download is
+            # offered, and the log carries the reason. The alternative to this
+            # silence would be a link to a file that is not there.
+            logger.exception("could not export the estimated solid as STEP")
+            step_path = None
 
     return ConversionResult(
         glb_path=str(out_glb),

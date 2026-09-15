@@ -61,6 +61,7 @@ UPDATE model_versions
 SET status = 'ready',
     glb_key = %s,
     metadata_key = %s,
+    step_key = %s,
     stats = %s,
     error_message = NULL,
     claimed_at = NULL
@@ -166,6 +167,14 @@ def process(conn: psycopg.Connection, job: dict[str, Any]) -> None:
         upload(out_glb, glb_key, "model/gltf-binary")
         upload(out_glb.with_suffix(".json"), metadata_key, "application/json")
 
+        # Only a reading of a drawing produces one. Uploaded inside the
+        # workspace block, like the other two: the temporary directory is gone
+        # by the time the row is written.
+        step_key = None
+        if result.step_path:
+            step_key = sibling_key(source_key, "estimated.step")
+            upload(Path(result.step_path), step_key, "model/step")
+
         stats = {
             "triangleCount": result.triangle_count,
             "deflection": result.deflection,
@@ -183,7 +192,8 @@ def process(conn: psycopg.Connection, job: dict[str, Any]) -> None:
 
     with conn.cursor() as cursor:
         cursor.execute(
-            SUCCEED_SQL, (glb_key, metadata_key, json.dumps(stats), version_id)
+            SUCCEED_SQL,
+            (glb_key, metadata_key, step_key, json.dumps(stats), version_id),
         )
 
         if name:

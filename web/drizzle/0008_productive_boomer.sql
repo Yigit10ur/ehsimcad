@@ -1,0 +1,1 @@
+ALTER TABLE "model_versions" ADD COLUMN "step_key" text;

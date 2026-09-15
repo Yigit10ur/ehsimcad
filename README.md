@@ -32,8 +32,11 @@ comes from the B-rep the CAD file actually contains.
 - Point-to-point measurement that snaps to real vertices and edges; a circular
   edge reports the diameter from its CAD definition rather than from the
   polygon approximating it
-- Section plane, capped with the stencil buffer so a cut solid reads as solid
-  rather than as a hollow shell
+- Section plane in any direction — a named axis, a direction borrowed from a
+  flat face, or tilted off either — capped with the stencil buffer so a cut
+  solid reads as solid rather than as a hollow shell
+- Angle between two flat faces, which is what a pair of faces that meet has
+  instead of a distance
 - Exploded view, isolate and hide, and a true edge overlay
 
 **Platform**
@@ -41,10 +44,16 @@ comes from the B-rep the CAD file actually contains.
 - Two separate modes, chosen before the file is: open a model, or estimate one
   from a drawing. They promise different things, so which one was used is
   recorded and marked on everything it produces
+- What was estimated can be taken away as a STEP file, marked as an estimate in
+  its file name, in its product name, and in the file's own header — because a
+  file that leaves here keeps none of the context that labelled it
 - Upload straight from the browser to object storage with a presigned URL
 - Conversion runs as a background worker off a database-backed queue
 - Every model belongs to a project, and every read and write is checked
   against it
+- A catalogue that is paged and searchable: by name, by description, and by the
+  name of the file a version was uploaded from, which is often not the name the
+  CAD file declares for itself
 - Sign in with GitHub
 
 ## How it works
@@ -109,8 +118,8 @@ see [DEPLOY.md](DEPLOY.md). The web app runs on Vercel, and Postgres and object
 storage on Supabase — both in Frankfurt, so that a page does not cross an ocean
 to read its own data.
 
-Not built yet: markup, angle measurement, an off-axis section plane, search and
-filtering, thumbnails, and a projects and sharing interface.
+Not built yet: markup, angle measurement between edges, filtering, and
+thumbnails.
 
 ## Contributing
 
@@ -156,8 +165,11 @@ raporlanan her sayı dosyanın gerçekten içerdiği B-rep'ten gelir.
   vermez
 - Gerçek köşe ve kenarlara snap olan nokta-nokta ölçüm; çember bir kenar,
   kendisini yaklaştıran çokgenden değil CAD tanımından gelen çapı bildirir
-- Stencil ile kapatılmış kesit düzlemi — kesilen katı, boş bir kabuk değil
-  katı olarak okunur
+- Her yönde kesit düzlemi — adlandırılmış bir eksen, düz bir yüzeyden ödünç
+  alınan bir yön, ya da ikisinden eğilerek. Stencil ile kapatılır: kesilen
+  katı, boş bir kabuk değil katı olarak okunur
+- İki düz yüzey arasındaki açı — birbirine değen bir yüzey çiftinin mesafe
+  yerine sahip olduğu şey
 - Patlatılmış görünüm, izole etme ve gizleme, gerçek kenar katmanı
 
 **Platform**
@@ -165,9 +177,16 @@ raporlanan her sayı dosyanın gerçekten içerdiği B-rep'ten gelir.
 - Dosyadan önce seçilen iki ayrı mod: bir modeli açmak, ya da bir çizimden
   parça tahmin etmek. İkisi farklı şeyler vaat ettiği için hangisinin
   kullanıldığı kaydedilir ve ürettiği her şeyin üzerinde görünür
+- Tahmin edilen parça STEP dosyası olarak indirilebilir; dosya adında, içindeki
+  ürün adında ve dosyanın kendi başlığında "tahmini" olarak işaretli — çünkü
+  buradan çıkan bir dosya, kendisini etiketleyen bağlamın hiçbirini yanında
+  götürmez
 - Tarayıcıdan doğrudan nesne depolamaya presigned URL ile yükleme
 - Dönüştürme, veritabanı destekli bir kuyruktan beslenen arka plan worker'ında
 - Her model bir projeye ait ve her okuma/yazma buna karşı denetleniyor
+- Sayfalanan ve aranabilen katalog: ada, açıklamaya ve bir versiyonun
+  yüklendiği dosya adına göre — ki bu ad çoğu zaman CAD dosyasının kendisi için
+  beyan ettiği ad değildir
 - GitHub ile giriş
 
 ### Nasıl çalışıyor
@@ -231,8 +250,8 @@ varsa çeviriyor ve kapanıyor — bkz. [DEPLOY.md](DEPLOY.md). Web uygulaması
 Vercel'de, Postgres ve nesne depolama Supabase'de — ikisi de Frankfurt'ta, bir
 sayfa kendi verisini okumak için okyanus aşmasın diye.
 
-Henüz yok: markup, açı ölçümü, eksen dışı kesit düzlemi, arama ve filtreleme,
-küçük resim üretimi, proje ve paylaşım arayüzü.
+Henüz yok: markup, kenarlar arası açı ölçümü, filtreleme ve küçük resim
+üretimi.
 
 ### Katkı
 

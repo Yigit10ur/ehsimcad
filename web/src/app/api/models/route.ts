@@ -1,8 +1,9 @@
-import { desc, eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { db, schema } from '@/db';
+import { decodeCursor, encodeCursor, pageOfModels } from '@/lib/catalogue';
 import { env } from '@/lib/env';
 import { extensionOf, formatOf, lengthNeeded, rejectionReason } from '@/lib/formats';
 import { canWrite, currentUser, personalProject, readableProjects } from '@/lib/session';
@@ -35,20 +36,37 @@ const createSchema = z.object({
 
 const unauthorized = () => NextResponse.json({ error: 'not signed in' }, { status: 401 });
 
-export async function GET() {
+/**
+ * One page of the caller's models, newest first.
+ *
+ * Paged by the same cursors the catalogue page uses, and through the same
+ * function: two pagings of one list would eventually disagree about where a
+ * page ends, and the one that was wrong would be whichever was tested less.
+ *
+ * `older` and `newer` come back encoded and ready to send straight back as
+ * `?after=` and `?before=`. Null means there is nothing that way.
+ */
+export async function GET(request: Request) {
   const user = await currentUser();
   if (!user) return unauthorized();
 
   await personalProject(user.id);
   const projectIds = await readableProjects(user.id);
 
-  const rows = await db.query.models.findMany({
-    where: inArray(schema.models.projectId, projectIds),
-    orderBy: [desc(schema.models.createdAt)],
-    with: { versions: { orderBy: [desc(schema.modelVersions.versionNo)] } },
+  const params = new URL(request.url).searchParams;
+  const page = await pageOfModels({
+    projectIds,
+    // A cursor this did not issue decodes to null, which asks for the first
+    // page. The same answer a stale bookmark gets, and for the same reason.
+    after: decodeCursor(params.get('after')),
+    before: decodeCursor(params.get('before')),
   });
 
-  return NextResponse.json({ models: rows });
+  return NextResponse.json({
+    models: page.models,
+    older: page.older ? encodeCursor(page.older) : null,
+    newer: page.newer ? encodeCursor(page.newer) : null,
+  });
 }
 
 /**

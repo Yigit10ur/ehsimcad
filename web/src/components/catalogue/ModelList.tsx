@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-import type { Model, ModelVersion } from '@/db/schema';
-
-export type ModelWithVersions = Model & { versions: ModelVersion[] };
+import type { ModelVersion } from '@/db/schema';
+// A type, so nothing of the data layer travels into the browser with it.
+import type { ModelWithVersions } from '@/lib/catalogue';
 
 /**
  * A dot and a word rather than a coloured pill.

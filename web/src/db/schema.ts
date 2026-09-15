@@ -144,7 +144,23 @@ export const models = pgTable(
     currentVersionId: uuid('current_version_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('models_project_idx').on(table.projectId)],
+  (table) => [
+    /*
+     * The catalogue's own query: the models of the projects a user can read,
+     * newest first, a page at a time. All three columns are here in the order
+     * the query asks for them, so the page is a walk along the index rather
+     * than a sort of everything that matched.
+     *
+     * This replaces a plain index on `project_id`. That one was a strict
+     * prefix of this, so it could answer nothing this cannot, and every insert
+     * was paying to maintain both.
+     */
+    index('models_project_created_idx').on(
+      table.projectId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
+  ],
 );
 
 export const modelVersions = pgTable(

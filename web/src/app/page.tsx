@@ -1,11 +1,17 @@
-import { desc, inArray } from 'drizzle-orm';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
-import { ModelList, type ModelWithVersions } from '@/components/catalogue/ModelList';
+import { ModelList } from '@/components/catalogue/ModelList';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { VerifyBanner } from '@/components/auth/VerifyBanner';
-import { db, schema } from '@/db';
+import {
+  PAGE_SIZE,
+  countModels,
+  decodeCursor,
+  encodeCursor,
+  pageOfModels,
+  type Page,
+} from '@/lib/catalogue';
 import { MODE_NAMES, SUPPORTED_FORMAT_NAMES } from '@/lib/formats';
 import { deletableIds } from '@/lib/models';
 import { projectsFor } from '@/lib/projects';
@@ -25,18 +31,26 @@ export const dynamic = 'force-dynamic';
  * Reads the database directly rather than through the API: it is a server
  * component in the same process, and the round trip would buy nothing.
  */
-async function loadModels(userId: string): Promise<ModelWithVersions[]> {
-  // Make sure the user has somewhere to upload to, then list everything they
-  // can read -- not just that one project, or a model shared with them would
-  // be openable by URL but invisible in the catalogue.
+async function loadPage(
+  userId: string,
+  cursors: { after?: string; before?: string },
+): Promise<{ page: Page; total: number }> {
+  // Make sure the user has somewhere to upload to, then read what they can
+  // see -- not just that one project, or a model shared with them would be
+  // openable by URL but invisible in the catalogue.
   await personalProject(userId);
   const projectIds = await readableProjects(userId);
 
-  return db.query.models.findMany({
-    where: inArray(schema.models.projectId, projectIds),
-    orderBy: [desc(schema.models.createdAt)],
-    with: { versions: { orderBy: [desc(schema.modelVersions.versionNo)] } },
-  });
+  const [page, total] = await Promise.all([
+    pageOfModels({
+      projectIds,
+      after: decodeCursor(cursors.after),
+      before: decodeCursor(cursors.before),
+    }),
+    countModels(projectIds),
+  ]);
+
+  return { page, total };
 }
 
 function NotConfigured({ detail }: { detail: string }) {
@@ -67,7 +81,15 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  // Which page is in the address, so it survives a refresh, a bookmark and
+  // the three-second poll the list runs while something is converting.
+  searchParams: Promise<{ after?: string; before?: string }>;
+}) {
+  const cursors = await searchParams;
+
   // redirect() reports itself by throwing, so it stays outside every try
   // block: caught, it would turn "please sign in" into "not configured".
   let user: Awaited<ReturnType<typeof currentUser>>;
@@ -83,14 +105,17 @@ export default async function Home() {
 
   if (!user) redirect('/sign-in');
 
-  let models: ModelWithVersions[];
+  let page: Page;
+  let total: number;
   let projects: Awaited<ReturnType<typeof projectsFor>>;
   let destinations: { id: string; name: string }[];
   let deletable: string[];
   let verified = true;
   try {
-    models = await loadModels(user.id);
-    deletable = [...(await deletableIds(models, user.id))];
+    ({ page, total } = await loadPage(user.id, cursors));
+    // Asked about this page's models only, which is the other half of what
+    // paging bought: it was two queries for the whole catalogue before.
+    deletable = [...(await deletableIds(page.models, user.id))];
     projects = await projectsFor(user.id);
     destinations = (await writableProjects(user.id)).map((project) => ({
       id: project.id,
@@ -162,9 +187,15 @@ export default async function Home() {
           <div>
             <h2 className="text-lg font-semibold tracking-tight text-slate-900">Models</h2>
             <p className="pt-1 text-xs text-slate-500">
-              {models.length === 0
+              {/* The total, not this page's share of it: the heading answers
+                  "how many models do I have", and a page of twenty-five
+                  cannot. */}
+              {total === 0
                 ? 'Nothing uploaded yet'
-                : `${models.length} model${models.length === 1 ? '' : 's'}`}
+                : `${total} model${total === 1 ? '' : 's'}`}
+              {total > PAGE_SIZE && (
+                <span className="text-slate-400"> · {page.models.length} shown</span>
+              )}
               <span className="text-slate-400"> · {SUPPORTED_FORMAT_NAMES.join(', ')}</span>
             </p>
           </div>
@@ -202,10 +233,47 @@ export default async function Home() {
         {/* Which project a model is in only means something once there is
             more than one to tell apart. */}
         <ModelList
-          models={models}
+          models={page.models}
           projects={projects.length > 1 ? projects : []}
           deletable={deletable}
         />
+
+        {/*
+          Only where there is somewhere to go. A pair of dead controls under a
+          list that fits on one screen is furniture, and this list fits on one
+          screen for most of the people who have it.
+
+          Links rather than buttons, because that is what they are: each one
+          has an address, and the address is the page. Refreshing keeps your
+          place, and so does the poll the list runs while a conversion is in
+          flight -- which is the whole reason the cursor lives in the URL
+          rather than in component state.
+        */}
+        {(page.newer || page.older) && (
+          <nav className="flex items-center justify-between pt-4 text-xs">
+            {page.newer ? (
+              <Link
+                href={`/?before=${encodeCursor(page.newer)}`}
+                className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-slate-600 transition-colors hover:bg-slate-100"
+              >
+                ← Newer
+              </Link>
+            ) : (
+              <span />
+            )}
+
+            {page.older ? (
+              <Link
+                href={`/?after=${encodeCursor(page.older)}`}
+                className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-slate-600 transition-colors hover:bg-slate-100"
+              >
+                Older →
+              </Link>
+            ) : (
+              <span />
+            )}
+          </nav>
+        )}
       </div>
     </main>
   );

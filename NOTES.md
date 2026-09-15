@@ -33,7 +33,7 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-507 tests pass: 356 in `web` (vitest, against an in-process Postgres), 151 in
+525 tests pass: 374 in `web` (vitest, against an in-process Postgres), 151 in
 `converter` (pytest). The geometry ones skip on a machine with no OCCT
 installed, which is most development machines, but no longer in CI:
 `geometry.yml` installs a kernel, proves it can be called, and runs them. That
@@ -594,8 +594,18 @@ there, and then the work: distance between two axes is one formula when they
 are parallel and another when they are skew, and mixing them up is silently
 wrong.
 
-**No thumbnails or search.** `thumbnail_key` exists and is unused. The
-catalogue has no pagination either, which is the real scaling limit.
+**No thumbnails or search.** `thumbnail_key` exists and is unused. Searching
+is the one of the two that is felt: the catalogue is paged now, so a model
+that is not on the current page can only be found by walking to it.
+
+The paging is by cursor rather than by offset, and the ordering is why. New
+models arrive at the top of a newest-first list, so on an offset the rows slide
+down underneath whoever is reading: upload something with page one open, ask
+for page two, and the last row of page one arrives again as the first row of
+page two. A cursor names a position in the ordering instead of a distance from
+its start. The cursor is a pair -- `created_at` with `id` behind it -- because
+two uploads can share a millisecond, and a page boundary between two rows with
+equal timestamps would either repeat one or skip one.
 
 **Sessions survive a password reset.** JWT strategy; an old cookie stays valid
 until it expires.

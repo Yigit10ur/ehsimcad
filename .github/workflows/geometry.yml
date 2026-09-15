@@ -1,0 +1,87 @@
+# The geometry path, actually run.
+#
+# `ci.yml` installs the converter without OCCT, so every test that needs a
+# kernel skips there -- thirty-six of them, silently, in green. That was
+# supposed to be covered by the Docker build, and the Docker build was never
+# run by anything. The gap closed on its own terms: the first time these tests
+# were run against a real kernel they found a bug that had already reached
+# production, where writing a STEP file left the part's name in OpenCascade's
+# session and the next thing to write one inherited it.
+#
+# So this is a separate workflow rather than another job in `ci.yml`, for one
+# reason: it runs only when the converter changes. A ~500 MB wheel and a
+# Docker build on every web pull request is how a CI suite becomes something
+# people wait out rather than read.
+name: geometry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'converter/**'
+      - '.github/workflows/geometry.yml'
+  pull_request:
+    paths:
+      - 'converter/**'
+      - '.github/workflows/geometry.yml'
+  # For a kernel that needs checking without a converter change: a new OCCT
+  # release, or a suspicion about a conversion that happened in production.
+  workflow_dispatch:
+
+concurrency:
+  group: geometry-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (with OCCT)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: converter
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: converter/pyproject.toml
+
+      # The same four the Dockerfile installs. OCP ships self-contained
+      # wheels, but the graphics stack underneath still wants these present,
+      # and a runner image that happens to carry them today is not a promise.
+      - name: Install what OpenCascade links against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglu1-mesa libxrender1 libxext6
+
+      - run: pip install -e ".[dev,cad]"
+
+      # Before the tests, not after: this is what makes their passing mean
+      # something. Every geometry test is guarded by `occt.available()`, so a
+      # kernel that cannot be imported would not fail this job -- it would
+      # skip its way through and report green, which is the exact failure this
+      # workflow exists to end. Selfcheck builds a shape and measures it, so
+      # it fails on a kernel that imports and cannot be called.
+      - name: Prove the kernel is really here
+        run: python -m app.selfcheck
+
+      # `-rs` lists the reason for anything that still skips, so a test quietly
+      # excusing itself is visible in the log rather than folded into a count.
+      - run: pytest -q -rs
+
+  image:
+    name: image (build, selfcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # What the production worker actually runs. It covers what the job above
+      # cannot: that the Debian base carries enough for OCP, and that the
+      # version ceiling in `pyproject.toml` still resolves to a kernel the
+      # code can call -- the image's own `selfcheck` runs during the build and
+      # fails it, which is the whole reason that line is in the Dockerfile.
+      - name: Build the converter image
+        run: docker build converter

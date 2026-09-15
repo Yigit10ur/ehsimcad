@@ -544,10 +544,6 @@ def export_step(shape, out_path: Path, product_name: str, description: str) -> P
     Millimetres, stated rather than assumed: the rest of the pipeline is in
     millimetres and a STEP file that does not say so is read as whatever the
     receiving system defaults to.
-
-    AP214 rather than AP242. Both would do, and AP242 is the newer of the two,
-    but AP214 is what every CAD system in use can read without a word about it,
-    and nothing exported here needs what AP242 adds.
     """
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
     from OCP.IFSelect import IFSelect_ReturnStatus
@@ -557,27 +553,46 @@ def export_step(shape, out_path: Path, product_name: str, description: str) -> P
 
     writer = STEPControl_Writer()
 
-    # These are global to the OCCT session, not to the writer, and the worker
-    # converts a whole queue in one process. Every export sets all three rather
-    # than relying on what the last one left behind.
-    Interface_Static.SetCVal_s("write.step.unit", "MM")
-    Interface_Static.SetCVal_s("write.step.schema", "AP214IS")
-    Interface_Static.SetCVal_s("write.step.product.name", product_name)
+    # These settings belong to the OCCT session, not to the writer that reads
+    # them, and they outlive this call. The worker converts a whole queue in
+    # one process, so a part name left behind here is the name the next thing
+    # to write a STEP file uses -- which is how a box with no name of its own
+    # came out of a later test calling itself `plain_shaft_ESTIMATED`.
+    #
+    # So the session is put back the way it was found. Setting all three on the
+    # way in is not enough on its own: the leak is not what this export reads,
+    # it is what everything after it reads.
+    settings = {
+        "write.step.unit": "MM",
+        # AP214 rather than AP242. Both would do, and AP242 is the newer of the
+        # two, but AP214 is what every CAD system in use can read without a
+        # word about it, and nothing exported here needs what AP242 adds.
+        "write.step.schema": "AP214IS",
+        "write.step.product.name": product_name,
+    }
+    restore = {key: Interface_Static.CVal_s(key) for key in settings}
 
-    if writer.Transfer(shape, STEPControl_StepModelType.STEPControl_AsIs) != (
-        IFSelect_ReturnStatus.IFSelect_RetDone
-    ):
-        raise RuntimeError("the solid could not be transferred to STEP")
+    try:
+        for key, value in settings.items():
+            Interface_Static.SetCVal_s(key, value)
 
-    header = APIHeaderSection_MakeHeader(writer.Model())
-    header.SetName(TCollection_HAsciiString(product_name))
-    header.SetOriginatingSystem(TCollection_HAsciiString("EhsimCAD"))
-    header.SetAuthorValue(1, TCollection_HAsciiString("EhsimCAD"))
-    header.SetDescriptionValue(1, TCollection_HAsciiString(description))
+        if writer.Transfer(shape, STEPControl_StepModelType.STEPControl_AsIs) != (
+            IFSelect_ReturnStatus.IFSelect_RetDone
+        ):
+            raise RuntimeError("the solid could not be transferred to STEP")
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if writer.Write(str(out_path)) != IFSelect_ReturnStatus.IFSelect_RetDone:
-        raise RuntimeError(f"the STEP file could not be written to {out_path}")
+        header = APIHeaderSection_MakeHeader(writer.Model())
+        header.SetName(TCollection_HAsciiString(product_name))
+        header.SetOriginatingSystem(TCollection_HAsciiString("EhsimCAD"))
+        header.SetAuthorValue(1, TCollection_HAsciiString("EhsimCAD"))
+        header.SetDescriptionValue(1, TCollection_HAsciiString(description))
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if writer.Write(str(out_path)) != IFSelect_ReturnStatus.IFSelect_RetDone:
+            raise RuntimeError(f"the STEP file could not be written to {out_path}")
+    finally:
+        for key, value in restore.items():
+            Interface_Static.SetCVal_s(key, value)
 
     return out_path
 

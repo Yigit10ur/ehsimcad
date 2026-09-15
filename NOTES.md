@@ -33,10 +33,16 @@ A network with no way out is provided for: the images are built on a machine
 that has the internet and carried over as one file, after which the install
 steps are the same ones.
 
-444 tests pass: 316 in `web` (vitest, against an in-process Postgres), 128 in
-`converter` (pytest; the geometry ones skip where OCCT is not installed, which
-is CI -- the drawing reader does not, because deciding what a drawing means is
-where being wrong is invisible).
+507 tests pass: 356 in `web` (vitest, against an in-process Postgres), 151 in
+`converter` (pytest). The geometry ones skip on a machine with no OCCT
+installed, which is most development machines, but no longer in CI:
+`geometry.yml` installs a kernel, proves it can be called, and runs them. That
+workflow is only triggered by a change under `converter/`, so a web pull
+request does not wait for a 500 MB wheel.
+
+It was worth doing. The first run of those tests against a real kernel found a
+bug that was already in production: writing a STEP file left the part's name in
+OpenCascade's session, and the next thing to write one inherited it.
 
 ---
 

@@ -93,9 +93,13 @@ class DerivedGeometry(BaseModel):
     the right model, and that is not something a number can carry.
     """
 
-    method: Literal["dxf-revolve", "pdf-revolve", "raster-revolve"]
-    axis_point: Vec3
-    axis_direction: Vec3
+    method: Literal["dxf-revolve", "pdf-revolve", "raster-revolve", "dxf-extrude"]
+    # The axis a profile was revolved about. Absent on a part that was run
+    # straight through instead: an extrusion has a direction but no axis, and
+    # reporting the direction as one would invite a reader to measure a
+    # radius about it.
+    axis_point: Vec3 | None = None
+    axis_direction: Vec3 | None = None
     # What the reading decided. Plain sentences, meant to be shown to whoever
     # opens the model.
     assumptions: list[str] = Field(default_factory=list)

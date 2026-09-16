@@ -202,6 +202,8 @@ def test_reports_what_an_unnamed_file_declares_without_judging_it(
     declared name is worth showing belongs to the worker, which can compare it
     against the name the file was uploaded under.
     """
+    import re
+
     from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 
@@ -211,7 +213,16 @@ def test_reports_what_an_unnamed_file_declares_without_judging_it(
     writer.Transfer(BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape(), STEPControl_AsIs)
     writer.Write(str(source))
 
+    # Read out of the file rather than written down here. The version string
+    # ends in a counter the OCCT session keeps across every STEP written in
+    # the process, so the exact name depends on what ran before this. What the
+    # converter promises is not a particular string -- it is that whatever the
+    # file declares is what comes back.
+    declared = re.search(r"PRODUCT\('([^']*)'", source.read_text())
+    assert declared is not None
+
     result = occt.convert(source, tmp_path / "unnamed.glb")
 
     assert result.metadata.tree[0].name
-    assert result.metadata.declared_name == "Open CASCADE STEP translator 7.9 1"
+    assert result.metadata.declared_name == declared.group(1)
+    assert declared.group(1).startswith("Open CASCADE STEP translator")

@@ -286,6 +286,7 @@ describe('borrowing a direction from a clicked face', () => {
     normal,
     axis: null,
     radius: null,
+    position: null,
   });
 
   it('takes the face normal and puts the cut on the click', () => {
@@ -307,7 +308,7 @@ describe('borrowing a direction from a clicked face', () => {
     // Silence would leave someone clicking a cylinder over and over. Naming
     // the kind is what tells them it is the face, not the click.
     const result = faceReference(
-      { kind: 'cylinder', normal: null, axis: [0, 0, 1], radius: 5 },
+      { kind: 'cylinder', normal: null, axis: [0, 0, 1], radius: 5, position: null },
       new THREE.Vector3(0, 0, 0),
       BOUNDS,
     );
@@ -322,7 +323,7 @@ describe('borrowing a direction from a clicked face', () => {
     // filled in. A cone's normal at one point says nothing about the rest of
     // it, and a cut taken from it would be square to nothing.
     const result = faceReference(
-      { kind: 'cone', normal: [0, 0, 1], axis: [0, 0, 1], radius: 3 },
+      { kind: 'cone', normal: [0, 0, 1], axis: [0, 0, 1], radius: 3, position: null },
       new THREE.Vector3(0, 0, 0),
       BOUNDS,
     );
@@ -340,7 +341,7 @@ describe('borrowing a direction from a clicked face', () => {
 
   it('refuses a plane whose normal never made it into the file', () => {
     const result = faceReference(
-      { kind: 'plane', normal: null, axis: null, radius: null },
+      { kind: 'plane', normal: null, axis: null, radius: null, position: null },
       new THREE.Vector3(0, 0, 0),
       BOUNDS,
     );

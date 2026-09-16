@@ -44,6 +44,12 @@ export interface FaceGeometry {
   normal: Vec3 | null;
   axis: Vec3 | null;
   radius: number | null;
+  /**
+   * Where the axis is, as against which way it points. A direction alone says
+   * a bore is vertical and nothing about where the bore is, so two of them
+   * cannot be measured apart. A sphere carries its centre here.
+   */
+  position: Vec3 | null;
 }
 
 /** What a part offers a measurement to snap onto. All exact, from the B-rep. */

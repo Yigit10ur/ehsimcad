@@ -335,23 +335,34 @@ def describe_face(face) -> FaceGeometry:
 
     if kind == GeomAbs_SurfaceType.GeomAbs_Cylinder:
         cylinder = adaptor.Cylinder()
-        axis = cylinder.Axis().Direction()
+        axis = cylinder.Axis()
+        direction, at = axis.Direction(), axis.Location()
         return FaceGeometry(
             kind="cylinder",
-            axis=(axis.X(), axis.Y(), axis.Z()),
+            axis=(direction.X(), direction.Y(), direction.Z()),
+            position=(at.X(), at.Y(), at.Z()),
             radius=cylinder.Radius(),
         )
 
     if kind == GeomAbs_SurfaceType.GeomAbs_Cone:
-        axis = adaptor.Cone().Axis().Direction()
+        cone = adaptor.Cone()
+        axis = cone.Axis()
+        direction, at = axis.Direction(), axis.Location()
         return FaceGeometry(
             kind="cone",
-            axis=(axis.X(), axis.Y(), axis.Z()),
-            radius=adaptor.Cone().RefRadius(),
+            axis=(direction.X(), direction.Y(), direction.Z()),
+            position=(at.X(), at.Y(), at.Z()),
+            radius=cone.RefRadius(),
         )
 
     if kind == GeomAbs_SurfaceType.GeomAbs_Sphere:
-        return FaceGeometry(kind="sphere", radius=adaptor.Sphere().Radius())
+        sphere = adaptor.Sphere()
+        centre = sphere.Location()
+        return FaceGeometry(
+            kind="sphere",
+            position=(centre.X(), centre.Y(), centre.Z()),
+            radius=sphere.Radius(),
+        )
 
     return FaceGeometry(kind="other")
 

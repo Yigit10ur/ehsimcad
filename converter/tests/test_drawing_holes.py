@@ -209,3 +209,33 @@ def test_a_bore_is_one_face(tmp_path):
     # Six for the box and one for each bore.
     assert len(meta["snap"]["n1"]["faces"]) == 8
     assert len(meta["face_groups"]["n1"]) == len(meta["snap"]["n1"]["faces"])
+
+
+@pytest.mark.skipif(not occt.available(), reason="OCCT bindings not installed")
+def test_a_bore_says_where_its_axis_is(tmp_path):
+    """What a measurement between two holes is made of.
+
+    A round face used to record which way its axis pointed and not where that
+    axis was, which is enough to say a bore is vertical and not enough to say
+    where the bore is -- so two of them could not be measured apart. The
+    distance between two holes is the dimension a plate is made to, and it was
+    the one thing the viewer could not answer.
+
+    Here because this is where the bores come from: the holes are drilled at
+    25 and 75 across a 60 wide plate, so the answer to read off them is 50.
+    """
+    out = tmp_path / "plate.glb"
+    drawing.convert(_saved(_holed_plate(), tmp_path), out)
+    meta = json.loads(out.with_suffix(".json").read_text())
+
+    bores = [face for face in meta["snap"]["n1"]["faces"] if face["kind"] == "cylinder"]
+    assert len(bores) == 2
+
+    for bore in bores:
+        assert bore["radius"] == pytest.approx(BORE_RADIUS)
+        # Down the part, which is the way an extrusion runs.
+        assert abs(bore["axis"][2]) == pytest.approx(1.0)
+
+    across = sorted(bore["position"][0] for bore in bores)
+    assert across == pytest.approx([25.0, 75.0])
+    assert all(bore["position"][1] == pytest.approx(30.0) for bore in bores)

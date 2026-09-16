@@ -1071,6 +1071,49 @@ def _outline_note(count: int) -> list[str]:
     return []
 
 
+def _loose_note(count: int) -> list[str]:
+    """What is said about edges that were drawn and did not become anything.
+
+    An outline is assembled end to end, so an edge that stops partway along
+    another joins nothing and falls out of every loop. That is how an ordinary
+    outside view of a bored shaft loses its bore: the hidden lines meet the end
+    faces in the middle rather than at a corner, the outline closes without
+    them, and back comes a convincing solid cylinder a fifth heavier than the
+    part. Measured on one: 31415.927 mm3 where the drawing says 26389.378.
+
+    Said rather than refused, because the same leftover is sometimes the right
+    answer. A keyway shown with two hidden lines is left out on purpose -- a
+    turned part does not have it cut -- and nothing in the geometry tells that
+    edge from the one that mattered. What can be said is that an edge was
+    drawn and not used, which is enough to check the section against the
+    drawing.
+    """
+    if count == 1:
+        return ["1 edge that closes into no outline, left out"]
+    if count > 1:
+        return [f"{count} edges that close into no outline, left out"]
+    return []
+
+
+def _loose_count(curves: list[Curve], tol: float) -> int:
+    """How many edges here belong to no closed outline at all.
+
+    For the plain reading, where there is no axis to close anything along.
+    """
+    try:
+        chains = _chains(curves, tol)
+    except DrawingError:
+        # Lines crossing is reported by whoever asked for the loops. Not
+        # somewhere to raise a second time from.
+        return 0
+    return sum(
+        len(chain)
+        for chain in chains
+        if math.dist(chain[0].start, chain[-1].end) > tol
+        or section_area(chain) <= tol * tol
+    )
+
+
 def _circles(curves: list[Curve], tol: float) -> set[int]:
     """Which curves here are arcs that together come to whole circles.
 
@@ -1102,8 +1145,12 @@ def _circles(curves: list[Curve], tol: float) -> set[int]:
 
 def _loops_on(
     curves: list[Curve], axis: Axis, keep: int, tol: float
-) -> list[list[Curve]]:
-    """Closed outlines on one side of the axis, closing along it where needed."""
+) -> tuple[list[list[Curve]], list[Curve]]:
+    """Closed outlines on one side of the axis, closing along it where needed.
+
+    With the edges that closed into none of them, which are not thrown away
+    here: see `_loose_note` for what a dropped edge costs.
+    """
     # A circle is not a profile, and it is the one shape that would otherwise
     # look like a very good one: closed, and lying right against the axis.
     circles = _circles(curves, tol)
@@ -1124,20 +1171,31 @@ def _loops_on(
             kept.append(clipped)
 
     loops: list[list[Curve]] = []
+    loose: list[Curve] = []
     for chain in _chains(kept, tol):
         first, last = chain[0].start, chain[-1].end
         if math.dist(first, last) <= tol:
-            loops.append(chain)
-            continue
-        # Open, but both ends on the axis: this is the solid case, where the
-        # material runs to the centre and the axis is the missing edge.
-        if (
+            closed = chain
+        elif (
+            # Open, but both ends on the axis: this is the solid case, where
+            # the material runs to the centre and the axis is the missing edge.
             abs(axis.signed_distance(first)) <= tol
             and abs(axis.signed_distance(last)) <= tol
         ):
-            loops.append([*chain, Curve(last, first)])
+            closed = [*chain, Curve(last, first)]
+        else:
+            loose.extend(chain)
+            continue
 
-    return [loop for loop in loops if section_area(loop) > tol * tol]
+        # An outline that encloses nothing is a line drawn back over itself.
+        # It is no more the profile than the loose ones are, and it was no
+        # less drawn.
+        if section_area(closed) > tol * tol:
+            loops.append(closed)
+        else:
+            loose.extend(chain)
+
+    return loops, loose
 
 
 def _signature(candidate: tuple[float, float, int, list[Curve]]) -> tuple[float, float]:
@@ -1151,7 +1209,7 @@ def _signature(candidate: tuple[float, float, int, list[Curve]]) -> tuple[float,
 
 def profile_of(
     outline: list[Curve], axis: Axis, tol: float
-) -> tuple[list[Curve], list[str], int, tuple[float, float]]:
+) -> tuple[list[Curve], list[str], int, int, tuple[float, float]]:
     """The outline to revolve, chosen from both sides of the axis.
 
     One view's worth of outline, since the sheet has been split by then. What
@@ -1165,15 +1223,21 @@ def profile_of(
     against the axis, and that holds whichever side it was drawn on.
 
     Reports how near the axis the winner lies and how much it encloses, which
-    is what one view is weighed against another with.
+    is what one view is weighed against another with, and how many edges on
+    the winning side became nothing.
     """
     by_side: dict[int, list[tuple[float, float, int, list[Curve]]]] = {}
+    adrift: dict[int, int] = {}
     for keep in (1, -1):
         found = []
-        for loop in _loops_on(outline, axis, keep, tol):
+        on_side, loose = _loops_on(outline, axis, keep, tol)
+        for loop in on_side:
             distance = min(abs(axis.signed_distance(p)) for p in _polygon(loop))
             found.append((distance, -section_area(loop), keep, loop))
         by_side[keep] = found
+        # Per side, because the side that was not revolved is the drawing's
+        # other half: everything on it is left out, and none of it is missing.
+        adrift[keep] = len(loose)
 
     candidates = by_side[1] + by_side[-1]
 
@@ -1210,7 +1274,7 @@ def profile_of(
             others += 1
     others -= 1  # the one being revolved
 
-    return loop, assumptions, others, (distance, negative_area)
+    return loop, assumptions, others, adrift[keep], (distance, negative_area)
 
 
 def read_profile(source: Path) -> Profile:
@@ -1353,6 +1417,9 @@ def prism_from(
     elsewhere = sum(
         _closed_count(view.curves, tol) for view in views if id(view) not in read
     )
+    # In the view the outline and its holes come from. The other view of the
+    # pair is measured across rather than read, so nothing in it is left out.
+    loose = _loose_count(section.curves, tol)
 
     assumptions = [
         "read as a part of constant section: the outline is taken to run "
@@ -1374,7 +1441,7 @@ def prism_from(
         units=units,
         holes=holes,
         assumptions=assumptions,
-        ignored=[*_outline_note(elsewhere), *ignored],
+        ignored=[*_outline_note(elsewhere), *_loose_note(loose), *ignored],
     )
 
 
@@ -1430,7 +1497,7 @@ def profile_from(
     for view in readable:
         axis = find_axis(view.axis_candidates)
         try:
-            loop, said, others, score = profile_of(view.curves, axis, tol)
+            loop, said, others, loose, score = profile_of(view.curves, axis, tol)
         except DrawingError as error:
             # One view that cannot be read is ordinary: an end view has a
             # centre line and no profile beside it. Keep the first refusal in
@@ -1438,7 +1505,7 @@ def profile_from(
             refused = refused or error
             continue
         standing = len(kin.get(id(view), (view,)))
-        readings.append(((-standing, *score), view, axis, loop, said, others))
+        readings.append(((-standing, *score), view, axis, loop, said, others, loose))
 
     if not readings:
         # Unreachable with nothing to raise: `readable` is never empty, so
@@ -1446,7 +1513,7 @@ def profile_from(
         raise refused  # type: ignore[misc]
 
     readings.sort(key=lambda reading: reading[0])
-    _key, chosen, axis, loop, said, others = readings[0]
+    _key, chosen, axis, loop, said, others, loose = readings[0]
 
     # Readings of outlines this one does not line up with. Each is a part this
     # sheet could have been saying, and nothing in the geometry chooses
@@ -1491,7 +1558,7 @@ def profile_from(
         curves=loop,
         units=units,
         assumptions=[*assumptions, *said],
-        ignored=[*_outline_note(others + elsewhere), *ignored],
+        ignored=[*_outline_note(others + elsewhere), *_loose_note(loose), *ignored],
     )
 
 

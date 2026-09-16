@@ -28,6 +28,7 @@ installed. The revolve, which cannot, is at the bottom behind a lazy import.
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -753,20 +754,47 @@ def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View
             i = parent[i]
         return i
 
+    def join(i: int, j: int) -> None:
+        a, b = root(i), root(j)
+        if a != b:
+            parent[b] = a
+
+    # Squares small enough that sharing one is itself the proof: two boxes
+    # that both reach into a square are at most its diagonal apart, and the
+    # diagonal here is under the gap. So a square's occupants are one group
+    # without any of them being measured against any other.
+    #
+    # Which is what a busy sheet needs. The gap is a fraction of the sheet, so
+    # squares the size of it grow as the drawing does -- 3604 curves fell into
+    # 602 of them and 28804 curves into 491, six per square and then sixty --
+    # and measuring the pairs inside a square is where a drawing of a few
+    # megabytes spent its minutes.
+    size = gap / 1.5
+
     occupants: dict[tuple[int, int], list[int]] = {}
     for i, box in enumerate(boxes):
-        for cell in _cells(box, gap):
+        for cell in _cells(box, size):
             occupants.setdefault(cell, []).append(i)
 
+    for members in occupants.values():
+        for j in members[1:]:
+            join(members[0], j)
+
+    # What is left are the pairs that fell in different squares. A square's
+    # occupants are one group from here on -- joining only ever merges groups
+    # -- so the first of them answers for all of them, and a square already
+    # joined to this curve is skipped whole rather than one member at a time.
     for i, box in enumerate(boxes):
         reach = (box[0] - gap, box[1] - gap, box[2] + gap, box[3] + gap)
-        for cell in _cells(reach, gap):
-            for j in occupants.get(cell, ()):
-                if j <= i or _box_gap(box, boxes[j]) > gap:
-                    continue
-                a, b = root(i), root(j)
-                if a != b:
-                    parent[b] = a
+        for cell in _cells(reach, size):
+            members = occupants.get(cell)
+            if not members or root(i) == root(members[0]):
+                continue
+            for j in members:
+                if _box_gap(box, boxes[j]) <= gap:
+                    # And the rest of that square comes with it.
+                    join(i, j)
+                    break
 
     grouped: dict[int, list[Curve]] = {}
     for i, curve in enumerate(outline):
@@ -918,7 +946,18 @@ def _clip(curve: Curve, axis: Axis, keep: int, tol: float) -> Curve | None:
 
 
 def _chains(curves: list[Curve], tol: float) -> list[list[Curve]]:
-    """Order the curves into runs that join end to end."""
+    """Order the curves into runs that join end to end.
+
+    Grown from the index of the ends, which is built here anyway to find the
+    crowded points. Searching for the next curve instead -- a scan of
+    everything still unplaced, per curve placed -- is what a sheet punishes: a
+    part drawn alone is a dozen curves either way, and the same part on a sheet
+    with a parts list and three other views is thousands. Measured on one of
+    7204 curves: `key` was called 1.8 million times to place them.
+
+    Nothing here decides which way round a chain runs, and nothing downstream
+    asks: `section_area` integrates the contour and takes the size of it.
+    """
 
     def key(p: Point) -> tuple[int, int]:
         return (round(p[0] / tol), round(p[1] / tol))
@@ -936,27 +975,42 @@ def _chains(curves: list[Curve], tol: float) -> list[list[Curve]]:
             "construction line, or a view drawn over another -- has to go."
         )
 
-    remaining = set(range(len(curves)))
+    placed: set[int] = set()
+
+    def joining(point: Point) -> int | None:
+        """The one curve not yet placed with an end here, if there is one.
+
+        At most two curves share an end -- more than that was refused above --
+        so this looks at two entries however large the drawing is.
+        """
+        for i in ends.get(key(point), ()):
+            if i not in placed:
+                return i
+        return None
+
     chains: list[list[Curve]] = []
 
-    while remaining:
-        chain = [curves[remaining.pop()]]
-        grew = True
-        while grew:
-            grew = False
-            for i in list(remaining):
-                candidate = curves[i]
-                for c in (candidate, candidate.reversed()):
-                    if key(c.start) == key(chain[-1].end):
-                        chain.append(c)
-                    elif key(c.end) == key(chain[0].start):
-                        chain.insert(0, c)
-                    else:
-                        continue
-                    remaining.discard(i)
-                    grew = True
-                    break
-        chains.append(chain)
+    for seed in range(len(curves)):
+        if seed in placed:
+            continue
+        placed.add(seed)
+        # Grown at both ends, so appending and prepending have to cost the
+        # same: a list would pay for every insert at the front.
+        chain = deque([curves[seed]])
+
+        while (i := joining(chain[-1].end)) is not None:
+            placed.add(i)
+            curve = curves[i]
+            joins = key(curve.start) == key(chain[-1].end)
+            chain.append(curve if joins else curve.reversed())
+
+        while (i := joining(chain[0].start)) is not None:
+            placed.add(i)
+            curve = curves[i]
+            joins = key(curve.end) == key(chain[0].start)
+            chain.appendleft(curve if joins else curve.reversed())
+
+        chains.append(list(chain))
 
     return chains
 

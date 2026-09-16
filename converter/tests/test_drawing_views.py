@@ -146,21 +146,75 @@ def test_each_view_is_revolved_about_its_own_centre_line(tmp_path):
     assert profile.axis.point[1] == pytest.approx(0.0)
 
 
-def test_a_centre_line_stays_with_the_part_it_stands_clear_of(tmp_path):
+def test_a_bored_part_keeps_the_axis_it_stands_clear_of(tmp_path):
     """A bored part is nowhere near its own axis, and the axis is still its own.
 
     The bore is the distance between them and the bore is a feature, not a gap
-    in the layout: on a thin-walled tube it is most of the drawing. So the
-    centre line is matched to the part by running its length, not by lying
-    near it -- a rule about distance would fail exactly where the part is
-    hardest to read.
+    in the layout: on a thin-walled tube it is most of the drawing. Asking
+    whether the part lies across its centre line would fail on either half
+    alone -- which is why the halves are put back together first, and the
+    question is asked once, of the whole view.
+    """
+    doc = _document()
+    msp = doc.modelspace()
+    _box(msp, 0, 18, 40, 20)
+    _box(msp, 0, -20, 40, -18)
+    _centre(msp, -5, 0, 45)
+
+    path = _saved(doc, tmp_path)
+    views = _views(path)
+
+    # Read through the division, not around it: one view, and it has the axis.
+    assert [view.has_axis for view in views] == [True]
+    assert drawing.section_area(drawing.read_profile(path).curves) == pytest.approx(
+        80.0
+    )
+
+
+def test_a_part_drawn_on_one_side_of_its_axis_is_still_read(tmp_path):
+    """Half a section and no mirror: a drawing this cannot divide.
+
+    The one half lies wholly to one side of its centre line, and nothing on
+    the sheet says whether that is a bore or another view entirely. So the
+    sheet is not divided and is read whole, which is what happened before
+    there were views at all. Blinder, and not a refusal.
     """
     doc = _document()
     msp = doc.modelspace()
     _box(msp, 0, 18, 40, 20)
     _centre(msp, -5, 0, 45)
 
+    assert not any(view.has_axis for view in _views(_saved(doc, tmp_path)))
     assert _area(doc, tmp_path) == pytest.approx(80.0)
+
+
+def test_an_end_view_does_not_lend_its_axis_to_the_view_beside_it(tmp_path):
+    """The ordinary turned-part sheet: a section, and the part seen down its axis.
+
+    An end view carries two centre lines crossing at its middle, and the
+    vertical one is as long as anything on the sheet. It reaches clear across
+    the section drawn beside it -- a disc is tall and thin -- so a rule that
+    asked only whether a line runs a view's length would hand the section a
+    vertical axis and turn the disc into a sphere.
+
+    What keeps them apart is that the section does not lie across that line.
+    """
+    doc = _document()
+    msp = doc.modelspace()
+    # The section: 5 thick, 40 in radius.
+    _box(msp, 0, -40, 5, 40)
+    _centre(msp, -6, 0, 11)
+    # The same disc seen down its axis, with the two centre lines it is drawn
+    # with. A circle is not read as outline, so this is centre lines alone --
+    # which is the case that has to be got right without any help.
+    msp.add_circle((100, 0), 40)
+    _centre(msp, 55, 0, 145)
+    msp.add_line((100, -45), (100, 45), dxfattribs={"layer": "CENTER"})
+
+    profile = drawing.read_profile(_saved(doc, tmp_path))
+
+    assert profile.axis.direction == pytest.approx((1.0, 0.0))
+    assert drawing.section_area(profile.curves) == pytest.approx(200.0)
 
 
 def test_the_halves_of_a_bored_part_are_one_view(tmp_path):

@@ -483,7 +483,9 @@ def _reflected_box(
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _join_mirrored(views: list[View], gap: float) -> list[View]:
+def _join_mirrored(
+    views: list[View], candidates: list[Curve], gap: float
+) -> list[View]:
     """Put back together the halves of a view that whitespace pulled apart.
 
     A turned part is drawn on both sides of its centre line, and the two halves
@@ -495,6 +497,11 @@ def _join_mirrored(views: list[View], gap: float) -> list[View]:
     line between them. Two views stacked on the sheet are not -- they show
     different things -- so this joins the one case it is meant to and leaves
     the sheet's own divisions alone.
+
+    Before the centre lines are handed out, on purpose. A half standing off
+    its own axis by the bore is exactly the case the handing out cannot judge,
+    so the halves are made whole first and the question is asked once, of a
+    view that straddles its axis the way a drawing of a turned part does.
     """
     parent = list(range(len(views)))
     boxes = [view.box for view in views]
@@ -505,11 +512,8 @@ def _join_mirrored(views: list[View], gap: float) -> list[View]:
             i = parent[i]
         return i
 
-    for i, a in enumerate(views):
+    for i in range(len(views)):
         for j in range(i + 1, len(views)):
-            shared = [
-                line for line in a.axis_candidates if line in views[j].axis_candidates
-            ]
             if not any(
                 all(
                     abs(p - q) <= gap
@@ -517,7 +521,8 @@ def _join_mirrored(views: list[View], gap: float) -> list[View]:
                         _reflected_box(boxes[i], line), boxes[j], strict=True
                     )
                 )
-                for line in shared
+                for line in candidates
+                if not line.is_arc
             ):
                 continue
             ra, rb = root(i), root(j)
@@ -528,12 +533,9 @@ def _join_mirrored(views: list[View], gap: float) -> list[View]:
     for i, view in enumerate(views):
         into = joined.get(root(i))
         if into is None:
-            joined[root(i)] = View(list(view.curves), list(view.axis_candidates))
+            joined[root(i)] = View(list(view.curves), [])
             continue
         into.curves.extend(view.curves)
-        into.axis_candidates.extend(
-            line for line in view.axis_candidates if line not in into.axis_candidates
-        )
 
     return list(joined.values())
 
@@ -557,9 +559,6 @@ def _runs_along(line: Curve, view: View, gap: float) -> bool:
     if _box_gap(_curve_box(line), view.box) <= gap:
         return True
 
-    if math.dist(line.start, line.end) <= gap:
-        return False
-
     dx, dy = _normalise((line.end[0] - line.start[0], line.end[1] - line.start[1]))
 
     def along(p: Point) -> float:
@@ -571,39 +570,49 @@ def _runs_along(line: Curve, view: View, gap: float) -> bool:
     return reach[0] <= span[0] + gap and reach[-1] >= span[-1] - gap
 
 
+def _passes_through(line: Curve, view: View, gap: float) -> bool:
+    """Whether a view lies across the line, rather than off to one side of it.
+
+    The second half of belonging, and the half that keeps one view's axis from
+    reaching another. A sheet is laid out in aligned rows and columns, so a
+    centre line drawn for the front view runs clear across whatever is drawn
+    above and below it and would otherwise claim them all -- an end view's
+    vertical centre line, handed to the front view beside it, turns a shaft on
+    its side.
+
+    Safe to ask because a turned part is drawn on both sides of its axis, and
+    the halves have already been put back together: what reaches this is a
+    view its axis runs through, bore and all.
+    """
+    axis = Axis(
+        line.start,
+        _normalise((line.end[0] - line.start[0], line.end[1] - line.start[1])),
+        "centre line",
+    )
+    x0, y0, x1, y1 = view.box
+    sides = [axis.signed_distance(p) for p in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+    return min(sides) <= gap and max(sides) >= -gap
+
+
 def _lay_axes_over(views: list[View], candidates: list[Curve], gap: float) -> None:
     """Give each view the centre lines that were drawn for it.
 
-    Running the length of a view is what qualifies a line, and then nearness
-    decides between the views that qualify: a centre line belongs to the view
-    it was drawn for, not to everything it happens to be no shorter than. A
-    sheet is laid out in aligned rows and columns, so one view's centre line
-    reaches clear across whatever is drawn above and below it, and without the
-    second test it would hand its axis to all of them.
-
-    Nearest, and whatever ties with it. The tie is the point: a turned part is
-    drawn on both sides of its centre line and its two halves stand the same
-    distance off, so the halves come back with the line they share -- which is
-    what lets them be recognised afterwards as one view cut in two.
+    Two questions, and a line has to answer both: does it run the length of
+    the view, and does the view lie across it. Length alone lets a line claim
+    anything it is no shorter than, several rows down the sheet; position
+    alone lets a bore push a part away from its own axis. Together they say
+    what a centre line is -- a line drawn through a part, end to end.
     """
-    boxes = [view.box for view in views]
-
     for line in candidates:
         # An arc is no use as an axis and is not offered as one. Leaving it
         # out here is what keeps `has_axis` from promising a view a reading
         # that `find_axis` would then refuse.
-        if line.is_arc:
+        if line.is_arc or math.dist(line.start, line.end) <= gap:
             continue
 
-        box = _curve_box(line)
-        along = [i for i, view in enumerate(views) if _runs_along(line, view, gap)]
-        if not along:
-            continue
-
-        nearest = min(_box_gap(box, boxes[i]) for i in along)
-        for i in along:
-            if _box_gap(box, boxes[i]) <= nearest + gap:
-                views[i].axis_candidates.append(line)
+        for view in views:
+            if _runs_along(line, view, gap) and _passes_through(line, view, gap):
+                view.axis_candidates.append(line)
 
 
 def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View]:
@@ -663,8 +672,8 @@ def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View
     tol = tolerance_for(outline)
     views = [View(curves, []) for curves in grouped.values() if _has_width(curves, tol)]
 
+    views = _join_mirrored(views, axis_candidates, gap)
     _lay_axes_over(views, axis_candidates, gap)
-    views = _join_mirrored(views, gap)
 
     # Biggest first, so that a tie anywhere downstream falls to the group that
     # carries more of the drawing rather than to whichever happened to be read

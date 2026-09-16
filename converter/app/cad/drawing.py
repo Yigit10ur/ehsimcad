@@ -200,6 +200,28 @@ class View:
 
 
 @dataclass
+class Prism:
+    """A closed outline and how far it runs, ready to be extruded.
+
+    The other thing a drawing can be read as, and the one that needs two
+    views. A turned part carries its own axis on the sheet, so one view is
+    enough; a part of constant section carries nothing of the sort, and the
+    depth it runs is simply not in the view that shows its shape. It is in the
+    one drawn above or beside it.
+
+    Which is the whole claim: that the outline runs straight through, at the
+    depth the second view gives. A part that needed a third view to describe
+    it is a part this claim is wrong about, and is refused rather than read.
+    """
+
+    curves: list[Curve]
+    depth: float
+    units: str
+    assumptions: list[str]
+    ignored: list[str]
+
+
+@dataclass
 class Profile:
     """A closed outline on one side of an axis, ready to be revolved."""
 
@@ -488,6 +510,65 @@ def _reflected_box(
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _draw_in(
+    inner: tuple[float, float, float, float],
+    outer: tuple[float, float, float, float],
+    gap: float,
+) -> bool:
+    """Whether one box sits inside another."""
+    return (
+        inner[0] >= outer[0] - gap
+        and inner[1] >= outer[1] - gap
+        and inner[2] <= outer[2] + gap
+        and inner[3] <= outer[3] + gap
+    )
+
+
+def _absorb_enclosed(views: list[View], gap: float) -> list[View]:
+    """Take into each view whatever is drawn inside its outline.
+
+    Whitespace groups what touches, and a hole touches nothing. A bore drawn
+    as a circle, a pocket, a hidden edge, a boss in the middle of a face --
+    each is a run of geometry standing clear of the outline around it, and
+    each would come out of the grouping as a view of its own.
+
+    It is not one. Nothing is drawn inside a view but the part that view
+    shows, so what a view encloses belongs to it -- and for a part read as a
+    constant section, that is the difference between a plate and a plate with
+    a hole in it.
+    """
+    boxes = [view.box for view in views]
+    parent = list(range(len(views)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(views)):
+        for j in range(len(views)):
+            if i == j or not _draw_in(boxes[i], boxes[j], gap):
+                continue
+            # Two boxes each inside the other are the same box, and joining
+            # them either way round is the same answer.
+            if _draw_in(boxes[j], boxes[i], gap) and j > i:
+                continue
+            ri, rj = root(i), root(j)
+            if ri != rj:
+                parent[ri] = rj
+
+    joined: dict[int, View] = {}
+    for i, view in enumerate(views):
+        into = joined.get(root(i))
+        if into is None:
+            joined[root(i)] = View(list(view.curves), [])
+            continue
+        into.curves.extend(view.curves)
+
+    return list(joined.values())
+
+
 def _join_mirrored(
     views: list[View], candidates: list[Curve], gap: float
 ) -> list[View]:
@@ -558,12 +639,11 @@ def _runs_along(line: Curve, view: View, gap: float) -> bool:
     title block is the case this has to get right, and it gets it right for
     the reason that matters: the centre line does not reach across it.
 
-    Or simply near, for a drawing where the centre line was not run out. Short
-    is a convention broken, not a different axis.
+    Reaching across, with only the overhang to spare -- not merely lying
+    inside. A plate is covered in centre lines that stop inside it, one pair
+    crossing at every bolt hole, and a rule that let a line in for being near
+    would hand a plate the axis of one of its holes and revolve it about that.
     """
-    if _box_gap(_curve_box(line), view.box) <= gap:
-        return True
-
     dx, dy = _normalise((line.end[0] - line.start[0], line.end[1] - line.start[1]))
 
     def along(p: Point) -> float:
@@ -677,6 +757,11 @@ def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View
     tol = tolerance_for(outline)
     views = [View(curves, []) for curves in grouped.values() if _has_width(curves, tol)]
 
+    # Enclosed first, while every box is still one group's own. A mirrored
+    # pair joined into one covers the whitespace between its halves, and
+    # anything drawn in that gap would look enclosed by a part it has nothing
+    # to do with.
+    views = _absorb_enclosed(views, gap)
     views = _join_mirrored(views, axis_candidates, gap)
     _lay_axes_over(views, axis_candidates, gap)
 
@@ -891,26 +976,35 @@ def section_area(curves: list[Curve]) -> float:
     return abs(total)
 
 
+def _closed_loops(curves: list[Curve], tol: float) -> list[list[Curve]]:
+    """The closed outlines in a group of geometry, with no axis to clip against.
+
+    What a turned part needs is the outline beside its centre line, which is a
+    different question and has `_loops_on` to answer it. This is the plainer
+    one: which chains here close, and enclose something. It is what a part of
+    constant section is read from, and what the groups nobody read are counted
+    by.
+    """
+    return [
+        chain
+        for chain in _chains(curves, tol)
+        if math.dist(chain[0].start, chain[-1].end) <= tol
+        and section_area(chain) > tol * tol
+    ]
+
+
 def _closed_count(curves: list[Curve], tol: float) -> int:
     """How many closed outlines a group of geometry holds.
 
-    For the groups that were not read. There is no axis out there to clip
-    against, and none is wanted: the question is only how much was left on the
-    sheet, so anything that closes and encloses something counts once.
+    For the groups that were not read. The question is only how much was left
+    on the sheet, so anything that closes and encloses something counts once.
     """
     try:
-        chains = _chains(curves, tol)
+        return len(_closed_loops(curves, tol))
     except DrawingError:
         # Lines crossing inside a group nobody read is not a reason to refuse
         # the drawing. It is a reason not to claim a count for that group.
         return 1
-
-    return sum(
-        1
-        for chain in chains
-        if math.dist(chain[0].start, chain[-1].end) <= tol
-        and section_area(chain) > tol * tol
-    )
 
 
 def _outline_note(count: int) -> list[str]:
@@ -1038,6 +1132,142 @@ def read_profile(source: Path) -> Profile:
     return profile_from(*read_curves(source))
 
 
+def read_part(source: Path) -> Profile | Prism:
+    """A DXF drawing read down to the one thing it can be built from.
+
+    Two readings, and the sheet says which. A turned part is drawn with a
+    centre line running the length of it -- ISO 128 asks for one, and without
+    it there is nothing to revolve about. A part of constant section is drawn
+    without one, and instead in two views that line up, because the depth it
+    runs is not in the view that shows its shape.
+
+    Turned first, and by the stronger evidence: a centre line claimed by a
+    view. A sheet with centre lines that claim nothing -- a plate covered in
+    bolt-hole crosses -- reaches the prism, which is where it belongs.
+    """
+    outline, candidates, units, ignored = read_curves(source)
+    if not outline:
+        raise DrawingError(
+            "the drawing has no lines or arcs outside its dimensions and notes."
+        )
+
+    views = split_views(outline, candidates)
+    if any(view.has_axis for view in views):
+        return profile_from(outline, candidates, units, ignored)
+
+    if any(len(group) > 1 for group in in_projection(views, _view_gap(outline))):
+        return prism_from(outline, candidates, units, ignored)
+
+    # Neither: no view holds a centre line and no two views line up. The
+    # turned reading owns the refusal, because a sheet that reaches here is a
+    # sheet with one drawing on it and no axis -- and its message is the one
+    # that says what to draw.
+    return profile_from(outline, candidates, units, ignored)
+
+
+def prism_from(
+    outline: list[Curve],
+    candidates: list[Curve],
+    units: str,
+    ignored: list[str],
+) -> Prism:
+    """Two views in projection, read down to an outline and the depth it runs.
+
+    The shape comes from the view that carries it and the depth from the view
+    that does not: of two views in projection, one shows the section and the
+    other shows it edge-on, as a band whose width is the whole thickness of
+    the part. Which is which is read off the outlines -- the section has
+    corners, the band has four.
+
+    Two views and no more. A part that needed a third to describe it is not a
+    part of constant section, and reading it as one would be the quiet kind of
+    wrong: a solid that measures exactly, and is the wrong solid.
+    """
+    tol = tolerance_for(outline + candidates)
+    gap = _view_gap(outline)
+    views = split_views(outline, candidates)
+
+    lined_up = [group for group in in_projection(views, gap) if len(group) > 1]
+    if not lined_up:
+        raise DrawingError(
+            "no centre line runs the length of anything here, so this is not "
+            "a turned part -- and no two of its views line up, so there is no "
+            "second view to take a depth from. A part of constant section "
+            "needs two: the shape in one, the thickness in the other."
+        )
+
+    group = max(lined_up, key=len)
+    if len(group) > 2:
+        raise DrawingError(
+            f"{len(group)} views of this part line up. A part drawn in more "
+            "than two views is not usually one that runs straight through, "
+            "and reading it as though it does would give a solid that "
+            "measures exactly and is the wrong shape."
+        )
+
+    loops = {}
+    for view in group:
+        try:
+            found = _closed_loops(view.curves, tol)
+        except DrawingError:
+            found = []
+        if found:
+            loops[id(view)] = max(found, key=section_area)
+
+    if len(loops) < 2:
+        raise DrawingError(
+            "the two views that line up do not both close into an outline. "
+            "Check for gaps at the corners: the shape and the thickness are "
+            "each read as a closed loop."
+        )
+
+    # The section is the view with more to it. A part drawn edge-on is a
+    # rectangle whatever its shape, so corners are what tell the two apart --
+    # and area breaks the tie for a part that really is a box.
+    section = max(
+        group, key=lambda view: (len(loops[id(view)]), section_area(loops[id(view)]))
+    )
+    edge_on = next(view for view in group if view is not section)
+    loop = loops[id(section)]
+
+    inside = len(_closed_loops(section.curves, tol)) - 1
+    if inside:
+        raise DrawingError(
+            f"the outline has {inside} more closed loop(s) inside it. A hole "
+            "or a cut-out through the part is not read yet, and a solid built "
+            "without it would be heavier than the part."
+        )
+
+    sx0, _sy0, sx1, _sy1 = section.box
+    ex0, ey0, ex1, ey1 = edge_on.box
+    # Which way the two views line up is which way the depth is measured. They
+    # share a row or a column -- never both, or they would be one view.
+    beside = min(sx1, ex1) <= max(sx0, ex0)
+    depth = (ex1 - ex0) if beside else (ey1 - ey0)
+
+    if depth <= tol:
+        raise DrawingError("the second view has no thickness in it to read")
+
+    read = {id(view) for view in group}
+    elsewhere = sum(
+        _closed_count(view.curves, tol) for view in views if id(view) not in read
+    )
+
+    return Prism(
+        curves=loop,
+        depth=depth,
+        units=units,
+        assumptions=[
+            "read as a part of constant section: the outline is taken to run "
+            "straight through, unchanged",
+            f"{depth:.4g} mm deep, from the view drawn "
+            + ("beside it" if beside else "above or below it"),
+            f"{len(loop)} edges enclosing {section_area(loop):.1f} mm2 of section",
+        ],
+        ignored=[*_outline_note(elsewhere), *ignored],
+    )
+
+
 def profile_from(
     outline: list[Curve],
     candidates: list[Curve],
@@ -1155,29 +1385,24 @@ def profile_from(
     )
 
 
-def revolve(profile: Profile):
-    """The profile swept a full turn about its axis, as an OCCT solid.
+def _face_of(curves: list[Curve]):
+    """The closed outline as a face OCCT can build on.
 
-    From here on the result is an ordinary B-rep and is treated as one: the
-    same tessellation, the same face groups, the same exact edges and faces the
-    measurement tools snap to. What it is not is a reading of a part -- it is a
-    reading of a drawing of a part, which is why it is labelled `derived` and
-    carries its assumptions with it.
+    Arcs stay arcs here, which is the reason the reading kept them as arcs all
+    the way down: a fillet built from a chord is a fillet nobody can measure.
     """
     from OCP.BRepBuilderAPI import (
         BRepBuilderAPI_MakeEdge,
         BRepBuilderAPI_MakeFace,
         BRepBuilderAPI_MakeWire,
     )
-    from OCP.BRepCheck import BRepCheck_Analyzer
-    from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
-    from OCP.gp import gp_Ax1, gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
+    from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
 
     def point(p: Point) -> gp_Pnt:
         return gp_Pnt(p[0], p[1], 0.0)
 
     wire = BRepBuilderAPI_MakeWire()
-    for curve in profile.curves:
+    for curve in curves:
         if not curve.is_arc:
             wire.Add(
                 BRepBuilderAPI_MakeEdge(point(curve.start), point(curve.end)).Edge()
@@ -1198,13 +1423,29 @@ def revolve(profile: Profile):
 
     face = BRepBuilderAPI_MakeFace(wire.Wire(), True)
     if not face.IsDone():
-        raise DrawingError("the outline does not bound a section that can be revolved")
+        raise DrawingError("the outline does not bound a section that can be built on")
+
+    return face.Face()
+
+
+def revolve(profile: Profile):
+    """The profile swept a full turn about its axis, as an OCCT solid.
+
+    From here on the result is an ordinary B-rep and is treated as one: the
+    same tessellation, the same face groups, the same exact edges and faces the
+    measurement tools snap to. What it is not is a reading of a part -- it is a
+    reading of a drawing of a part, which is why it is labelled `derived` and
+    carries its assumptions with it.
+    """
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeRevol
+    from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt
 
     axis = gp_Ax1(
         gp_Pnt(profile.axis.point[0], profile.axis.point[1], 0.0),
         gp_Dir(profile.axis.direction[0], profile.axis.direction[1], 0.0),
     )
-    solid = BRepPrimAPI_MakeRevol(face.Face(), axis, 2 * math.pi).Shape()
+    solid = BRepPrimAPI_MakeRevol(_face_of(profile.curves), axis, 2 * math.pi).Shape()
 
     if not BRepCheck_Analyzer(solid).IsValid():
         raise DrawingError(
@@ -1215,12 +1456,61 @@ def revolve(profile: Profile):
     return solid
 
 
+def extrude(prism: Prism):
+    """The outline run straight through by its depth, as an OCCT solid.
+
+    The other of the two builds, and the same afterwards: a real B-rep, with
+    the same tessellation, the same face groups, the same exact edges the
+    measurement tools snap to. Labelled `derived` for the same reason -- it is
+    a reading of a drawing of a part, not of a part.
+
+    Drawn flat on the sheet and pushed along Z, so the model comes out standing
+    the way the section was drawn. Which face is which was never in the
+    drawing to begin with; what the drawing gave was a shape and a thickness,
+    and that is what this builds.
+    """
+    from OCP.BRepCheck import BRepCheck_Analyzer
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+    from OCP.gp import gp_Vec
+
+    solid = BRepPrimAPI_MakePrism(
+        _face_of(prism.curves), gp_Vec(0.0, 0.0, prism.depth)
+    ).Shape()
+
+    if not BRepCheck_Analyzer(solid).IsValid():
+        raise DrawingError(
+            "running the outline through did not produce a valid solid. The "
+            "usual cause is an outline that crosses itself."
+        )
+    return solid
+
+
 def convert(source: Path, out_glb: Path, deflection: float | None = None):
-    """A DXF drawing of a turned part, as far as a .glb the viewer can open."""
+    """A DXF drawing, as far as a .glb the viewer can open.
+
+    Whichever of the two the sheet turns out to be. The build differs and the
+    label differs; everything after is the same B-rep treated the same way.
+    """
     from app.cad import occt
 
-    profile = read_profile(source)
-    solid = revolve(profile)
+    read = read_part(source)
+
+    if isinstance(read, Prism):
+        solid = extrude(read)
+        derived = DerivedGeometry(
+            method="dxf-extrude",
+            assumptions=read.assumptions,
+            ignored=read.ignored,
+        )
+    else:
+        solid = revolve(read)
+        derived = DerivedGeometry(
+            method="dxf-revolve",
+            axis_point=(read.axis.point[0], read.axis.point[1], 0.0),
+            axis_direction=(read.axis.direction[0], read.axis.direction[1], 0.0),
+            assumptions=read.assumptions,
+            ignored=read.ignored,
+        )
 
     part = occt.Part(
         id="n1",
@@ -1233,19 +1523,5 @@ def convert(source: Path, out_glb: Path, deflection: float | None = None):
     )
 
     return occt.build(
-        [part],
-        out_glb,
-        deflection,
-        geometry_source="derived",
-        derived=DerivedGeometry(
-            method="dxf-revolve",
-            axis_point=(profile.axis.point[0], profile.axis.point[1], 0.0),
-            axis_direction=(
-                profile.axis.direction[0],
-                profile.axis.direction[1],
-                0.0,
-            ),
-            assumptions=profile.assumptions,
-            ignored=profile.ignored,
-        ),
+        [part], out_glb, deflection, geometry_source="derived", derived=derived
     )

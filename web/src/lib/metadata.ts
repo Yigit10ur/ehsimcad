@@ -69,9 +69,19 @@ export type GeometrySource = 'brep' | 'mesh' | 'derived';
 
 /** How a model was worked out from a drawing. Present only for `derived`. */
 export interface DerivedGeometry {
-  method: 'dxf-revolve';
-  axis_point: Vec3;
-  axis_direction: Vec3;
+  /**
+   * What was read, and from what. A `revolve` is a profile turned about a
+   * centre line; an `extrude` is an outline run straight through at a depth
+   * taken from a second view.
+   */
+  method: 'dxf-revolve' | 'pdf-revolve' | 'raster-revolve' | 'dxf-extrude';
+  /**
+   * The axis a profile was revolved about. Absent on a part run straight
+   * through instead: an extrusion has a direction but no axis, and offering
+   * the direction as one would invite measuring a radius about it.
+   */
+  axis_point?: Vec3 | null;
+  axis_direction?: Vec3 | null;
   /** What the reading decided. Plain sentences, written to be shown. */
   assumptions: string[];
   /**

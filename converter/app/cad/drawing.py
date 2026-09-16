@@ -217,6 +217,10 @@ class Prism:
     curves: list[Curve]
     depth: float
     units: str
+    # Closed outlines inside the first one, each cut out of the part. A bolt
+    # hole, a slot, a lightening pocket -- all the same thing to the build,
+    # and all of them material the part does not have.
+    holes: list[list[Curve]]
     assumptions: list[str]
     ignored: list[str]
 
@@ -338,9 +342,28 @@ def _curves_of(entity) -> list[Curve]:
             )
         return out
 
-    # CIRCLE is deliberately absent. A full circle in a turned part's drawing
-    # belongs to the end view, not to the profile, and revolving it would build
-    # a torus nobody drew.
+    if kind == "CIRCLE":
+        c, r = entity.dxf.center, entity.dxf.radius
+        # Four quarters, and where they are split is the point. A centre line
+        # drawn through the middle horizontally or vertically meets these arcs
+        # at their ends and never crosses one partway -- and an arc crossed
+        # partway is an arc this cannot cut.
+        #
+        # What a circle must never become is the outline to revolve: turning
+        # one about a line through it builds a sphere nobody drew. Kept out of
+        # that by `_circles`, where the rule can see what it is looking at,
+        # rather than by refusing to read the entity at all.
+        corners = [
+            (c.x + r, c.y),
+            (c.x, c.y + r),
+            (c.x - r, c.y),
+            (c.x, c.y - r),
+        ]
+        return [
+            Curve(corners[i], corners[(i + 1) % 4], (c.x, c.y), ccw=True)
+            for i in range(4)
+        ]
+
     return []
 
 
@@ -976,6 +999,34 @@ def section_area(curves: list[Curve]) -> float:
     return abs(total)
 
 
+def _within(point: Point, polygon: list[Point]) -> bool:
+    """Whether a point lies inside a closed polygon.
+
+    Ray casting, counting the edges a ray to the right crosses. Odd is inside.
+    """
+    x, y = point
+    inside = False
+    previous = polygon[-1]
+    for current in polygon:
+        (xi, yi), (xj, yj) = current, previous
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        previous = current
+    return inside
+
+
+def _enclosed_by(inner: list[Curve], outer: list[Curve]) -> bool:
+    """Whether one closed outline lies wholly within another.
+
+    Within the outline itself rather than within the box around it, and the
+    difference is a part with a notch cut out of its corner: the empty square
+    where the notch is falls inside the box and is not inside the part. A hole
+    cut there would be a hole in nothing.
+    """
+    boundary = _polygon(outer)
+    return all(_within(point, boundary) for point in _polygon(inner))
+
+
 def _closed_loops(curves: list[Curve], tol: float) -> list[list[Curve]]:
     """The closed outlines in a group of geometry, with no axis to clip against.
 
@@ -1020,12 +1071,47 @@ def _outline_note(count: int) -> list[str]:
     return []
 
 
+def _circles(curves: list[Curve], tol: float) -> set[int]:
+    """Which curves here are arcs that together come to whole circles.
+
+    A full circle in a view is a hole seen end-on, a bolt circle, or a round
+    part seen down its axis. What it is never is the profile of a turned part:
+    revolving a circle about a line through it builds a sphere, and about a
+    line beside it a torus, and the drawing said neither.
+
+    Totted up by centre and radius rather than taken on trust from the entity
+    that produced them, so a circle drawn as two halves, or as a closed
+    polyline of arcs, is still a circle.
+    """
+    groups: dict[tuple[int, int, int], list[int]] = {}
+    for i, curve in enumerate(curves):
+        if not curve.is_arc:
+            continue
+        cx, cy = curve.centre  # type: ignore[misc]
+        radius = math.dist(curve.centre, curve.start)  # type: ignore[arg-type]
+        key = (round(cx / tol), round(cy / tol), round(radius / tol))
+        groups.setdefault(key, []).append(i)
+
+    whole: set[int] = set()
+    for members in groups.values():
+        sweep = sum(abs(curves[i]._sweep()) for i in members)
+        if abs(sweep - 2 * math.pi) <= 1e-9:
+            whole.update(members)
+    return whole
+
+
 def _loops_on(
     curves: list[Curve], axis: Axis, keep: int, tol: float
 ) -> list[list[Curve]]:
     """Closed outlines on one side of the axis, closing along it where needed."""
+    # A circle is not a profile, and it is the one shape that would otherwise
+    # look like a very good one: closed, and lying right against the axis.
+    circles = _circles(curves, tol)
+
     kept: list[Curve] = []
-    for curve in curves:
+    for index, curve in enumerate(curves):
+        if index in circles:
+            continue
         # A curve lying along the axis is either the centre line itself or an
         # edge with no radius. Neither bounds anything to revolve.
         if (
@@ -1205,14 +1291,17 @@ def prism_from(
             "measures exactly and is the wrong shape."
         )
 
-    loops = {}
+    loops: dict[int, list[list[Curve]]] = {}
     for view in group:
         try:
             found = _closed_loops(view.curves, tol)
         except DrawingError:
             found = []
         if found:
-            loops[id(view)] = max(found, key=section_area)
+            loops[id(view)] = found
+
+    def widest(view: View) -> list[Curve]:
+        return max(loops[id(view)], key=section_area)
 
     if len(loops) < 2:
         raise DrawingError(
@@ -1225,25 +1314,37 @@ def prism_from(
     # rectangle whatever its shape, so corners are what tell the two apart --
     # and area breaks the tie for a part that really is a box.
     section = max(
-        group, key=lambda view: (len(loops[id(view)]), section_area(loops[id(view)]))
+        group, key=lambda view: (len(widest(view)), section_area(widest(view)))
     )
     edge_on = next(view for view in group if view is not section)
-    loop = loops[id(section)]
+    loop = widest(section)
 
-    inside = len(_closed_loops(section.curves, tol)) - 1
-    if inside:
+    # Everything else that closes inside the outline is material the part
+    # does not have. A loop that is not inside it is something else entirely,
+    # and guessing which would be a way to cut a hole in the wrong place.
+    holes, beside = [], 0
+    for other in loops[id(section)]:
+        if other is loop:
+            continue
+        if _enclosed_by(other, loop):
+            holes.append(other)
+        else:
+            beside += 1
+
+    if beside:
         raise DrawingError(
-            f"the outline has {inside} more closed loop(s) inside it. A hole "
-            "or a cut-out through the part is not read yet, and a solid built "
-            "without it would be heavier than the part."
+            f"{beside} closed outline(s) sit beside the part rather than "
+            "inside it, in the view being read. What they are is not "
+            "something this can tell, and cutting them out or leaving them "
+            "in would each be a guess."
         )
 
     sx0, _sy0, sx1, _sy1 = section.box
     ex0, ey0, ex1, ey1 = edge_on.box
     # Which way the two views line up is which way the depth is measured. They
     # share a row or a column -- never both, or they would be one view.
-    beside = min(sx1, ex1) <= max(sx0, ex0)
-    depth = (ex1 - ex0) if beside else (ey1 - ey0)
+    lengthways = min(sx1, ex1) <= max(sx0, ex0)
+    depth = (ex1 - ex0) if lengthways else (ey1 - ey0)
 
     if depth <= tol:
         raise DrawingError("the second view has no thickness in it to read")
@@ -1253,17 +1354,26 @@ def prism_from(
         _closed_count(view.curves, tol) for view in views if id(view) not in read
     )
 
+    assumptions = [
+        "read as a part of constant section: the outline is taken to run "
+        "straight through, unchanged",
+        f"{depth:.4g} mm deep, from the view drawn "
+        + ("beside it" if lengthways else "above or below it"),
+        f"{len(loop)} edges enclosing {section_area(loop):.1f} mm2 of section",
+    ]
+    if holes:
+        cut = sum(section_area(hole) for hole in holes)
+        assumptions.append(
+            f"{len(holes)} outline(s) inside it, cut out as holes running the "
+            f"same depth: {cut:.1f} mm2 of section taken away"
+        )
+
     return Prism(
         curves=loop,
         depth=depth,
         units=units,
-        assumptions=[
-            "read as a part of constant section: the outline is taken to run "
-            "straight through, unchanged",
-            f"{depth:.4g} mm deep, from the view drawn "
-            + ("beside it" if beside else "above or below it"),
-            f"{len(loop)} edges enclosing {section_area(loop):.1f} mm2 of section",
-        ],
+        holes=holes,
+        assumptions=assumptions,
         ignored=[*_outline_note(elsewhere), *ignored],
     )
 
@@ -1385,23 +1495,63 @@ def profile_from(
     )
 
 
-def _face_of(curves: list[Curve]):
-    """The closed outline as a face OCCT can build on.
+def _whole_circle(curves: list[Curve]) -> tuple[Point, float] | None:
+    """The centre and radius, if these curves are one complete circle.
 
-    Arcs stay arcs here, which is the reason the reading kept them as arcs all
-    the way down: a fillet built from a chord is a fillet nobody can measure.
+    Asked at the point of building rather than of reading, and that is the
+    division of labour: the reading splits a circle into quarters so that a
+    centre line through it is never crossed partway, and the build puts it
+    back so that a bore is one face.
+
+    One face matters. Every measurement in the viewer snaps to a face, and a
+    bore in four pieces is a bore somebody has to click four times and can
+    never take a diameter from.
     """
-    from OCP.BRepBuilderAPI import (
-        BRepBuilderAPI_MakeEdge,
-        BRepBuilderAPI_MakeFace,
-        BRepBuilderAPI_MakeWire,
-    )
+    if not curves or not all(curve.is_arc for curve in curves):
+        return None
+
+    centre = curves[0].centre
+    radius = math.dist(centre, curves[0].start)  # type: ignore[arg-type]
+    if radius <= 0:
+        return None
+
+    near = radius * 1e-9
+    for curve in curves:
+        if math.dist(curve.centre, centre) > near:  # type: ignore[arg-type]
+            return None
+        if abs(math.dist(curve.centre, curve.start) - radius) > near:  # type: ignore[arg-type]
+            return None
+
+    sweep = sum(abs(curve._sweep()) for curve in curves)
+    if abs(sweep - 2 * math.pi) > 1e-9:
+        return None
+
+    return centre, radius  # type: ignore[return-value]
+
+
+def _wire_of(curves: list[Curve]):
+    """One closed outline as an OCCT wire.
+
+    Arcs stay arcs here, which is why the reading kept them as arcs all the
+    way down: a fillet built from a chord is a fillet nobody can measure.
+    """
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
     from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt
 
     def point(p: Point) -> gp_Pnt:
         return gp_Pnt(p[0], p[1], 0.0)
 
     wire = BRepBuilderAPI_MakeWire()
+
+    round_one = _whole_circle(curves)
+    if round_one is not None:
+        centre, radius = round_one
+        whole = gp_Circ(gp_Ax2(point(centre), gp_Dir(0, 0, 1)), radius)
+        wire.Add(BRepBuilderAPI_MakeEdge(whole).Edge())
+        if not wire.IsDone():
+            raise DrawingError("a circle on the sheet did not close")
+        return wire.Wire()
+
     for curve in curves:
         if not curve.is_arc:
             wire.Add(
@@ -1421,9 +1571,30 @@ def _face_of(curves: list[Curve]):
     if not wire.IsDone():
         raise DrawingError("the outline did not close into a single loop")
 
-    face = BRepBuilderAPI_MakeFace(wire.Wire(), True)
+    return wire.Wire()
+
+
+def _face_of(curves: list[Curve], holes: list[list[Curve]] | None = None):
+    """The closed outline as a face OCCT can build on, with its holes in it.
+
+    A hole is a wire added to the face running the other way round. Which way
+    round it runs is the whole of it: the same wire the right way is a second
+    face, and the same wire the wrong way is a face OCCT will build and then
+    measure as though the hole were solid.
+    """
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.TopoDS import TopoDS
+
+    face = BRepBuilderAPI_MakeFace(_wire_of(curves), True)
     if not face.IsDone():
         raise DrawingError("the outline does not bound a section that can be built on")
+
+    for hole in holes or []:
+        # Reversing hands back a shape rather than a wire, and `Add` takes a
+        # wire. The cast is the same object seen as what it is.
+        face.Add(TopoDS.Wire_s(_wire_of(hole).Reversed()))
+        if not face.IsDone():
+            raise DrawingError("an outline inside the part could not be cut out of it")
 
     return face.Face()
 
@@ -1474,7 +1645,7 @@ def extrude(prism: Prism):
     from OCP.gp import gp_Vec
 
     solid = BRepPrimAPI_MakePrism(
-        _face_of(prism.curves), gp_Vec(0.0, 0.0, prism.depth)
+        _face_of(prism.curves, prism.holes), gp_Vec(0.0, 0.0, prism.depth)
     ).Shape()
 
     if not BRepCheck_Analyzer(solid).IsValid():

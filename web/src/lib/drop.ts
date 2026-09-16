@@ -1,12 +1,16 @@
 /**
- * What was let go over the drop zone, and whether it is one file.
+ * The one file a drop meant, out of whatever it was carrying.
  *
  * A file picker can only return files, and only as many as it was told to
  * accept. A drop can carry anything the operating system will let go of: a
  * folder, a selection of eleven parts, a link dragged out of another tab, a
- * piece of text. The upload takes one file, so the rest have to be turned away
- * -- and turned away by name, because "nothing happened" is what a person sees
- * otherwise, and the reason it did not happen is different every time.
+ * piece of text.
+ *
+ * The upload takes one file, and takes it without comment -- the first real
+ * file in the drop goes up and the zone closes behind it, rather than the
+ * whole drop being refused over its size. What is left are the two drops that
+ * carry no file to take at all, and those are said out loud: a drop zone gives
+ * no other sign, and "nothing happened" is what a person sees otherwise.
  *
  * Kept apart from the form so that it can be read without a browser. The
  * shapes below are the parts of `DataTransfer` this needs, which is what lets
@@ -43,37 +47,38 @@ function isFolder(item: DroppedItem): boolean {
   return item.kind === 'file' && item.webkitGetAsEntry?.()?.isDirectory === true;
 }
 
-function refuse(error: string): Drop {
-  return { error };
+/**
+ * The dropped files, with any folder among them left behind.
+ *
+ * `files` holds one entry per item of kind `file`, in the same order, so the
+ * items that are folders are the entries to drop. Anything that does not line
+ * up -- a browser that lists no items at all -- is left as it came: a folder
+ * that cannot be recognised is better uploaded than a file that is quietly
+ * discarded for being mistaken for one.
+ */
+function withoutFolders(files: File[], items: DroppedItem[]): File[] {
+  const asFiles = items.filter((item) => item.kind === 'file');
+  if (asFiles.length !== files.length) return files;
+
+  return files.filter((_, index) => !isFolder(asFiles[index]));
 }
 
-/**
- * The one file a drop meant, or the reason it did not carry one.
- *
- * The folder check comes first because a folder is the failure that looks most
- * like a success: it is counted as a file, it has a name, and it would be
- * accepted by every test below it.
- */
 export function fileFromDrop(contents: DropContents | null | undefined): Drop {
   const items = contents?.items ? Array.from(contents.items) : [];
   const files = contents?.files ? Array.from(contents.files) : [];
+  const usable = withoutFolders(files, items);
 
-  if (items.some(isFolder)) {
-    return refuse('That is a folder. Open it and drag the file itself.');
+  if (usable.length > 0) return { file: usable[0] };
+
+  if (files.length > 0) {
+    // Everything dropped was a folder. The failure that looks most like a
+    // success: a folder is counted among the files, it has a name, and reading
+    // it yields nothing at all.
+    return { error: 'That is a folder. Open it and drag the file itself.' };
   }
 
-  if (files.length === 0) {
-    // A link or a piece of selected text dragged out of another page. It has a
-    // name and an icon and is not a file, and saying "no file" alone would
-    // read as a fault in the page rather than in what was dragged.
-    return refuse('That was not a file. Drag one in from a folder rather than from a page.');
-  }
-
-  if (files.length > 1) {
-    return refuse(
-      `${files.length} files at once, and this uploads one. Drop the one to start with.`,
-    );
-  }
-
-  return { file: files[0] };
+  // A link or a piece of selected text dragged out of another page. It has a
+  // name and an icon and is not a file, and saying "no file" alone would read
+  // as a fault in the page rather than in what was dragged.
+  return { error: 'That was not a file. Drag one in from a folder rather than from a page.' };
 }

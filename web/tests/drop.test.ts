@@ -1,12 +1,13 @@
 /**
- * What a drop is allowed to carry, and what it is told when it carries more.
+ * Which file a drop meant, out of whatever it was carrying.
  *
  * A file picker asks for one file of a known kind and gets one. A drop is
  * whatever the operating system will let go of over the window, so these are
- * the four things that can arrive and the three that have to be turned back.
- * The wording is tested with them: every refusal here is a person standing
- * over a drop zone that did nothing, and the only useful answer says what to
- * drop instead.
+ * the things that can arrive and what is taken from each. A drop of several is
+ * one upload rather than a refusal; only a drop with no file in it at all has
+ * nothing to take, and those two say so. The wording is tested with them: a
+ * drop zone gives no other sign, and a reason that only describes the mistake
+ * leaves the same dead end as silence.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -58,6 +59,36 @@ describe('the one file a drop meant', () => {
     expect(result).toEqual({ file: dropped });
   });
 
+  it('takes the first of several rather than refusing them all', () => {
+    /*
+     * The form uploads one and closes behind it, so the other four are left
+     * where they were. Refusing the drop over its size would leave the person
+     * with nothing uploaded and a count they did not need; taking one leaves
+     * them with the part they dropped first and four still to hand.
+     */
+    const first = file('a.step');
+    const result = fileFromDrop(drop([first, file('b.step'), file('c.step')]));
+
+    expect(result).toEqual({ file: first });
+  });
+
+  it('leaves a folder behind and takes the file beside it', () => {
+    const wanted = file('bracket.step');
+    const result = fileFromDrop(drop([file('parts'), wanted], [folder, { kind: 'file' }]));
+
+    expect(result).toEqual({ file: wanted });
+  });
+
+  it('takes the file from a drop that also carries a name for it', () => {
+    // An image dragged out of another page arrives as a string item and a
+    // file item together. Only the file items line up with `files`, so the
+    // string must not shift which one is read as a folder.
+    const wanted = file('sheet.png');
+    const contents = { files: [wanted], items: [{ kind: 'string' }, { kind: 'file' }] };
+
+    expect(fileFromDrop(contents)).toEqual({ file: wanted });
+  });
+
   it('does not judge what the file is, which the mode does', () => {
     // Anything with a name gets through here. Whether this mode takes a .zip
     // is `rejectionReason`'s answer, and asking it twice in two places is how
@@ -70,8 +101,7 @@ describe('what a drop carries instead', () => {
   it('turns back a folder, which otherwise uploads as an empty file', () => {
     /*
      * The failure that looks most like a success: a dropped folder is counted
-     * among the files, it has a name, and reading it yields nothing. Every
-     * test after this one would have accepted it.
+     * among the files, it has a name, and reading it yields nothing.
      */
     const reason = refusalFor(drop([file('parts')], [folder]));
 
@@ -79,18 +109,9 @@ describe('what a drop carries instead', () => {
     expect(reason).toContain('drag the file itself');
   });
 
-  it('says folder even when a real file came with it', () => {
-    const reason = refusalFor(drop([file('parts'), file('bracket.step')], [folder, { kind: 'file' }]));
+  it('turns back a drop of nothing but folders', () => {
+    const reason = refusalFor(drop([file('parts'), file('fixtures')], [folder, folder]));
     expect(reason).toContain('folder');
-  });
-
-  it('turns back several files, and says how many', () => {
-    const reason = refusalFor(drop([file('a.step'), file('b.step'), file('c.step')]));
-
-    // Counting them is what tells someone the drop was seen. "One at a time"
-    // alone reads like a refusal of the file rather than of the number.
-    expect(reason).toContain('3');
-    expect(reason).toContain('one');
   });
 
   it('turns back a link or a selection dragged out of another page', () => {
@@ -112,7 +133,6 @@ describe('what a drop carries instead', () => {
     // reason that only describes the mistake leaves the same dead end.
     const refusals = [
       refusalFor(drop([file('parts')], [folder])),
-      refusalFor(drop([file('a.step'), file('b.step')])),
       refusalFor({ files: [], items: [{ kind: 'string' }] }),
     ];
 

@@ -31,6 +31,10 @@ const NOUNS: Record<UploadMode, string> = {
  * files are accepted, and what a refusal says, cannot depend on whether the
  * file was dropped or chosen from the picker -- so there is one answer to that
  * question and both ways ask it.
+ *
+ * One at a time, either way. A file in hand closes the form behind it: the
+ * picker will not open and the zone will not take a second, which is what
+ * makes a drop of five parts a definite thing rather than a race between them.
  */
 export function UploadForm({
   destinations,
@@ -52,12 +56,19 @@ export function UploadForm({
   const [projectId, setProjectId] = useState(destinations[0]?.id);
   /** True while a drag is over the zone, which is the only sign it is one. */
   const [over, setOver] = useState(false);
+  /** The file on its way up, kept so the form can name what it is holding. */
+  const [sending, setSending] = useState<File | null>(null);
 
   const busy = stage !== 'idle';
-  // A drop is taken only when there is nothing else to answer first: mid
-  // upload, or with the length still being asked for, a second file would
-  // quietly replace the one already in hand.
-  const accepting = !busy && !waiting;
+  /*
+   * The one file this form is about, from the moment it is taken until it has
+   * landed -- being asked how long it is, or going up. While there is one, a
+   * second is not taken: not by the zone, not by the picker. Five files
+   * dropped together are one upload and four left where they were, rather than
+   * five uploads racing or a refusal of all five.
+   */
+  const held = waiting ?? sending;
+  const accepting = !held;
 
   /*
    * A file let go anywhere but the zone is opened by the browser, which
@@ -90,18 +101,27 @@ export function UploadForm({
 
   async function upload(file: File, lengthMm?: number) {
     setError(null);
+    setSending(file);
 
     try {
       await uploadCadFile(file, { projectId, mode }, setStage, lengthMm);
       // Back to the catalogue, which is where the conversion can be watched:
       // this page has done its one job and has nothing to show afterwards.
       router.push('/');
+      /*
+       * And left holding the file it sent. The form stays closed for the
+       * moment the catalogue takes to arrive: reopening it there would invite
+       * a second file that the navigation is about to abandon.
+       */
+      return;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setStage('idle');
-      if (input.current) input.current.value = '';
     }
+
+    // Only a file that did not land gives the form back.
+    setStage('idle');
+    setSending(null);
+    if (input.current) input.current.value = '';
   }
 
   /**
@@ -166,17 +186,27 @@ export function UploadForm({
           else offer(dropped.file);
         }}
         className={`flex flex-col items-center gap-3 rounded-lg border border-dashed px-6 py-7 text-center transition-colors ${
-          over ? 'border-blue-400 bg-blue-50' : 'border-slate-300 bg-white'
+          held
+            ? 'border-slate-200 bg-slate-50'
+            : over
+              ? 'border-blue-400 bg-blue-50'
+              : 'border-slate-300 bg-white'
         }`}
       >
-        <p className="text-sm text-slate-600">
-          {over ? 'Let go to upload' : `Drag ${NOUNS[mode]} here`}
-        </p>
+        {/* Naming the file is the whole of what a drop of several is told: one
+            of them was taken, and this is which. */}
+        {held ? (
+          <p className="max-w-full truncate text-sm font-medium text-slate-700">{held.name}</p>
+        ) : (
+          <p className="text-sm text-slate-600">
+            {over ? 'Let go to upload' : `Drag ${NOUNS[mode]} here`}
+          </p>
+        )}
 
         <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled={busy}
+            disabled={!accepting}
             onClick={() => input.current?.click()}
             className="rounded-md bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:bg-slate-300 disabled:shadow-none"
           >

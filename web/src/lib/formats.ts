@@ -212,17 +212,32 @@ function withArticle(noun: string): string {
 }
 
 function nativeMessage(extension: string, format: NativeFormat): string {
-  const source = format.application === UNNAMED ? 'a native CAD' : withArticle(format.application);
+  const named = format.application !== UNNAMED;
+  const source = named ? withArticle(format.application) : 'a native CAD';
+
+  /*
+   * Which application does the exporting, said out loud.
+   *
+   * Whoever reads this is quite likely the one without a seat -- serving the
+   * machines that have no CAD licence is what this platform is for. "Export it
+   * to STEP" is then an instruction they cannot carry out, and naming the
+   * application is what turns it into one they can pass on to somebody who
+   * can.
+   *
+   * Left off where several applications share an extension and none can be
+   * named: "export it from a CAD" tells nobody anything.
+   */
+  const from = named ? ` from ${format.application}` : '';
 
   if (format.kind === 'drawing') {
     // Telling someone to export a drawing to STEP would send them in circles:
     // a drawing has no solid to export. What they want is the model it
     // documents.
-    const owner = format.application === UNNAMED ? 'a' : withArticle(format.application);
-    return `${extension} is ${owner} drawing, not a 3D model. Upload the part or assembly it documents, exported to STEP — or, for a turned part, save the drawing as DXF.`;
+    const owner = named ? withArticle(format.application) : 'a';
+    return `${extension} is ${owner} drawing, not a 3D model. Upload the part or assembly it documents, exported to STEP${from} — or, for a turned part, save the drawing as DXF.`;
   }
 
-  return `${extension} is ${source} ${format.kind} file, which needs a commercial SDK to read. Export it to STEP and upload that.`;
+  return `${extension} is ${source} ${format.kind} file, which needs a commercial SDK to read. Export it to STEP${from} and upload that.`;
 }
 
 /**

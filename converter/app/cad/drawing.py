@@ -754,20 +754,47 @@ def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View
             i = parent[i]
         return i
 
+    def join(i: int, j: int) -> None:
+        a, b = root(i), root(j)
+        if a != b:
+            parent[b] = a
+
+    # Squares small enough that sharing one is itself the proof: two boxes
+    # that both reach into a square are at most its diagonal apart, and the
+    # diagonal here is under the gap. So a square's occupants are one group
+    # without any of them being measured against any other.
+    #
+    # Which is what a busy sheet needs. The gap is a fraction of the sheet, so
+    # squares the size of it grow as the drawing does -- 3604 curves fell into
+    # 602 of them and 28804 curves into 491, six per square and then sixty --
+    # and measuring the pairs inside a square is where a drawing of a few
+    # megabytes spent its minutes.
+    size = gap / 1.5
+
     occupants: dict[tuple[int, int], list[int]] = {}
     for i, box in enumerate(boxes):
-        for cell in _cells(box, gap):
+        for cell in _cells(box, size):
             occupants.setdefault(cell, []).append(i)
 
+    for members in occupants.values():
+        for j in members[1:]:
+            join(members[0], j)
+
+    # What is left are the pairs that fell in different squares. A square's
+    # occupants are one group from here on -- joining only ever merges groups
+    # -- so the first of them answers for all of them, and a square already
+    # joined to this curve is skipped whole rather than one member at a time.
     for i, box in enumerate(boxes):
         reach = (box[0] - gap, box[1] - gap, box[2] + gap, box[3] + gap)
-        for cell in _cells(reach, gap):
-            for j in occupants.get(cell, ()):
-                if j <= i or _box_gap(box, boxes[j]) > gap:
-                    continue
-                a, b = root(i), root(j)
-                if a != b:
-                    parent[b] = a
+        for cell in _cells(reach, size):
+            members = occupants.get(cell)
+            if not members or root(i) == root(members[0]):
+                continue
+            for j in members:
+                if _box_gap(box, boxes[j]) <= gap:
+                    # And the rest of that square comes with it.
+                    join(i, j)
+                    break
 
     grouped: dict[int, list[Curve]] = {}
     for i, curve in enumerate(outline):

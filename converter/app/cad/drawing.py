@@ -28,6 +28,7 @@ installed. The revolve, which cannot, is at the bottom behind a lazy import.
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -918,7 +919,18 @@ def _clip(curve: Curve, axis: Axis, keep: int, tol: float) -> Curve | None:
 
 
 def _chains(curves: list[Curve], tol: float) -> list[list[Curve]]:
-    """Order the curves into runs that join end to end."""
+    """Order the curves into runs that join end to end.
+
+    Grown from the index of the ends, which is built here anyway to find the
+    crowded points. Searching for the next curve instead -- a scan of
+    everything still unplaced, per curve placed -- is what a sheet punishes: a
+    part drawn alone is a dozen curves either way, and the same part on a sheet
+    with a parts list and three other views is thousands. Measured on one of
+    7204 curves: `key` was called 1.8 million times to place them.
+
+    Nothing here decides which way round a chain runs, and nothing downstream
+    asks: `section_area` integrates the contour and takes the size of it.
+    """
 
     def key(p: Point) -> tuple[int, int]:
         return (round(p[0] / tol), round(p[1] / tol))
@@ -936,27 +948,42 @@ def _chains(curves: list[Curve], tol: float) -> list[list[Curve]]:
             "construction line, or a view drawn over another -- has to go."
         )
 
-    remaining = set(range(len(curves)))
+    placed: set[int] = set()
+
+    def joining(point: Point) -> int | None:
+        """The one curve not yet placed with an end here, if there is one.
+
+        At most two curves share an end -- more than that was refused above --
+        so this looks at two entries however large the drawing is.
+        """
+        for i in ends.get(key(point), ()):
+            if i not in placed:
+                return i
+        return None
+
     chains: list[list[Curve]] = []
 
-    while remaining:
-        chain = [curves[remaining.pop()]]
-        grew = True
-        while grew:
-            grew = False
-            for i in list(remaining):
-                candidate = curves[i]
-                for c in (candidate, candidate.reversed()):
-                    if key(c.start) == key(chain[-1].end):
-                        chain.append(c)
-                    elif key(c.end) == key(chain[0].start):
-                        chain.insert(0, c)
-                    else:
-                        continue
-                    remaining.discard(i)
-                    grew = True
-                    break
-        chains.append(chain)
+    for seed in range(len(curves)):
+        if seed in placed:
+            continue
+        placed.add(seed)
+        # Grown at both ends, so appending and prepending have to cost the
+        # same: a list would pay for every insert at the front.
+        chain = deque([curves[seed]])
+
+        while (i := joining(chain[-1].end)) is not None:
+            placed.add(i)
+            curve = curves[i]
+            joins = key(curve.start) == key(chain[-1].end)
+            chain.append(curve if joins else curve.reversed())
+
+        while (i := joining(chain[0].start)) is not None:
+            placed.add(i)
+            curve = curves[i]
+            joins = key(curve.end) == key(chain[0].start)
+            chain.appendleft(curve if joins else curve.reversed())
+
+        chains.append(list(chain))
 
     return chains
 

@@ -158,15 +158,21 @@ def test_a_part_drawn_in_three_views_is_refused(tmp_path):
         drawing.read_part(_saved(doc, tmp_path))
 
 
-def test_a_cut_out_through_the_outline_is_refused(tmp_path):
-    """A solid built without the hole would weigh more than the part."""
+def test_an_outline_beside_the_part_rather_than_inside_it_is_refused(tmp_path):
+    """Inside is a hole. Beside is something nobody here can name.
+
+    Cutting it out and leaving it in are both guesses, and the difference
+    between them is material the part either has or does not.
+    """
     doc = _document()
     msp = doc.modelspace()
     _chain(msp, PLATE)
-    _rect(msp, 30, 20, 50, 40)
     _rect(msp, 0, -20, 100, -12)
+    # In the empty square the notch leaves: inside the box around the part,
+    # and not inside the part. A hole cut there would be a hole in nothing.
+    _rect(msp, 85, 45, 95, 55)
 
-    with pytest.raises(drawing.DrawingError, match="closed loop"):
+    with pytest.raises(drawing.DrawingError, match="beside the part"):
         drawing.read_part(_saved(doc, tmp_path))
 
 

@@ -76,6 +76,10 @@ export default async function EstimatePage() {
                 Flat parts of constant section, drawn in two views that line up
                 — the shape in one, the thickness in the other
               </li>
+              <li>
+                Holes and slots through a flat part: any outline closed inside
+                the shape is cut out of it
+              </li>
               <li>Fillets and chamfers, kept as arcs rather than flattened</li>
             </ul>
           </div>
@@ -86,7 +90,11 @@ export default async function EstimatePage() {
             </h2>
             <ul className="space-y-1 pt-1.5 text-xs leading-relaxed text-slate-600">
               <li>
-                Anything cut into the part: holes, pockets, keyways and threads
+                Anything that stops partway: a blind pocket, a counterbore, a
+                thread. A hole is taken to go all the way through
+              </li>
+              <li>
+                Cross holes and keyways on a turned part, which are not cut
               </li>
               <li>
                 A part that takes three views to describe, which is not one

@@ -452,6 +452,11 @@ def _cells(box: tuple[float, float, float, float], size: float):
             yield (cx, cy)
 
 
+def _view_gap(outline: list[Curve]) -> float:
+    """The whitespace that separates one view from the next on this sheet."""
+    return _diagonal(_bbox(outline)) * VIEW_GAP
+
+
 def _has_width(curves: list[Curve], tol: float) -> bool:
     """Whether a group of geometry spreads out in both directions."""
     x0, y0, x1, y1 = _bbox(curves)
@@ -631,7 +636,7 @@ def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View
     if not outline:
         return []
 
-    gap = _diagonal(_bbox(outline)) * VIEW_GAP
+    gap = _view_gap(outline)
     if gap <= 0:
         # Everything at one point. Not a sheet with views on it.
         return [View(list(outline), list(axis_candidates))]
@@ -680,6 +685,64 @@ def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View
     # first.
     views.sort(key=lambda view: -_diagonal(view.box))
     return views
+
+
+def _in_projection(a: View, b: View, gap: float) -> bool:
+    """Whether two views are one part seen from two directions.
+
+    Orthographic projection lines them up, and that is the whole of the test.
+    A view drawn above or below another shares its width; a view drawn beside
+    it shares its height. Shares, not merely overlaps: both show the same
+    dimension of the same part at the same scale, so what they have in common
+    is the whole of both.
+
+    Which is also what a detail does not do. A detail is the same part drawn
+    at 2:1 or 5:1, so it lines up with nothing -- and a second view is
+    therefore worth more than a bigger outline, which is the one thing a
+    reading of a sheet cannot tell from size alone.
+    """
+    ax0, ay0, ax1, ay1 = a.box
+    bx0, by0, bx1, by1 = b.box
+
+    over_x = min(ax1, bx1) > max(ax0, bx0)
+    over_y = min(ay1, by1) > max(ay0, by0)
+
+    if over_x and not over_y:
+        return abs(ax0 - bx0) <= gap and abs(ax1 - bx1) <= gap
+    if over_y and not over_x:
+        return abs(ay0 - by0) <= gap and abs(ay1 - by1) <= gap
+    # Corner to corner, or one inside the other. Neither is a projection.
+    return False
+
+
+def in_projection(views: list[View], gap: float) -> list[list[View]]:
+    """The views grouped by which of them show the same part.
+
+    A sheet can hold more than one part, and a part more than one drawing that
+    is not a projection of it -- a detail, a magnified corner. Lining up is
+    what says two drawings are of one thing, and it is the drawing standard
+    saying it rather than this guessing.
+    """
+    parent = list(range(len(views)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(views)):
+        for j in range(i + 1, len(views)):
+            if not _in_projection(views[i], views[j], gap):
+                continue
+            ri, rj = root(i), root(j)
+            if ri != rj:
+                parent[rj] = ri
+
+    grouped: dict[int, list[View]] = {}
+    for i, view in enumerate(views):
+        grouped.setdefault(root(i), []).append(view)
+    return list(grouped.values())
 
 
 def find_axis(candidates: list[Curve]) -> Axis:
@@ -1000,6 +1063,7 @@ def profile_from(
         )
 
     tol = tolerance_for(outline + candidates)
+    gap = _view_gap(outline)
     views = split_views(outline, candidates)
     readable = [view for view in views if view.has_axis]
 
@@ -1011,8 +1075,17 @@ def profile_from(
     if not divided:
         readable = [View(list(outline), list(candidates))]
 
-    best: tuple[tuple[float, float], View, Axis, list[Curve], list[str], int] | None
-    best = None
+    # How many views each one is drawn in line with, itself included. A view
+    # that is one of several of the same part is worth more than a lone
+    # outline that happens to enclose more, which is the only thing size on
+    # its own can say -- and a detail drawn at 5:1 encloses a great deal.
+    kin: dict[int, list[View]] = {}
+    if divided:
+        for group in in_projection(views, gap):
+            for view in group:
+                kin[id(view)] = group
+
+    readings = []
     refused: DrawingError | None = None
     for view in readable:
         axis = find_axis(view.axis_candidates)
@@ -1024,15 +1097,22 @@ def profile_from(
             # case every view turns out that way.
             refused = refused or error
             continue
-        if best is None or score < best[0]:
-            best = (score, view, axis, loop, said, others)
+        standing = len(kin.get(id(view), (view,)))
+        readings.append(((-standing, *score), view, axis, loop, said, others))
 
-    if best is None:
+    if not readings:
         # Unreachable with nothing to raise: `readable` is never empty, so
         # either a view was read or a view refused.
         raise refused  # type: ignore[misc]
 
-    _score, chosen, axis, loop, said, others = best
+    readings.sort(key=lambda reading: reading[0])
+    _key, chosen, axis, loop, said, others = readings[0]
+
+    # Readings of outlines this one does not line up with. Each is a part this
+    # sheet could have been saying, and nothing in the geometry chooses
+    # between them.
+    family = {id(view) for view in kin.get(id(chosen), [chosen])}
+    rivals = sum(1 for reading in readings[1:] if id(reading[1]) not in family)
 
     elsewhere = (
         sum(_closed_count(view.curves, tol) for view in views if view is not chosen)
@@ -1048,6 +1128,22 @@ def profile_from(
         assumptions.append(
             f"one of {len(views)} groups of geometry on the sheet: "
             "the one this centre line runs along"
+        )
+    if len(family) > 1:
+        assumptions.append(
+            f"{len(family)} views of the part line up on the sheet, and the "
+            "profile is read from this one"
+        )
+    if rivals:
+        readings_left = (
+            "another reading of this sheet was possible"
+            if rivals == 1
+            else f"{rivals} other readings of this sheet were possible"
+        )
+        assumptions.append(
+            f"{readings_left}, of an outline that does not line up with this "
+            "one -- a detail drawn to another scale looks like that, and "
+            "nothing in the geometry chooses between them"
         )
 
     return Profile(

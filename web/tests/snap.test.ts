@@ -28,7 +28,7 @@ const GEOMETRY: SnapGeometry = {
       radius: null,
     },
   ],
-  faces: [{ kind: 'plane', normal: [0, 0, 1], axis: null, radius: null }],
+  faces: [{ kind: 'plane', normal: [0, 0, 1], axis: null, radius: null, position: null }],
 };
 
 /** Close enough to the corner that everything is within tolerance. */

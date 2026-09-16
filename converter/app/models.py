@@ -64,6 +64,11 @@ class FaceGeometry(BaseModel):
     normal: Vec3 | None = None
     axis: Vec3 | None = None
     radius: float | None = None
+    # Where the axis is, as against which way it points. A direction alone
+    # says a bore is vertical and nothing about where the bore is, so two of
+    # them cannot be measured apart -- and the distance between two holes is
+    # the dimension a plate is made to. A sphere carries its centre here.
+    position: Vec3 | None = None
 
 
 class SnapGeometry(BaseModel):

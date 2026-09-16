@@ -32,6 +32,9 @@ comes from the B-rep the CAD file actually contains.
 - Point-to-point measurement that snaps to real vertices and edges; a circular
   edge reports the diameter from its CAD definition rather than from the
   polygon approximating it
+- Bore diameter and hole-to-hole distance, taken from the B-rep's own axes.
+  Clicking a round face chooses the hole and supplies no number, because a
+  point on a curved face is off the true surface by the tessellation error
 - Section plane in any direction — a named axis, a direction borrowed from a
   flat face, or tilted off either — capped with the stencil buffer so a cut
   solid reads as solid rather than as a hollow shell
@@ -165,6 +168,9 @@ raporlanan her sayı dosyanın gerçekten içerdiği B-rep'ten gelir.
   vermez
 - Gerçek köşe ve kenarlara snap olan nokta-nokta ölçüm; çember bir kenar,
   kendisini yaklaştıran çokgenden değil CAD tanımından gelen çapı bildirir
+- Delik çapı ve delikten deliğe mesafe, B-rep'in kendi eksenlerinden. Yuvarlak
+  bir yüzeye tıklamak hangi delik olduğunu seçer, sayıyı vermez: eğri bir
+  yüzeydeki nokta, tessellation hatası kadar gerçek yüzeyin dışındadır
 - Her yönde kesit düzlemi — adlandırılmış bir eksen, düz bir yüzeyden ödünç
   alınan bir yön, ya da ikisinden eğilerek. Stencil ile kapatılır: kesilen
   katı, boş bir kabuk değil katı olarak okunur

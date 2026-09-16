@@ -194,7 +194,8 @@ deflection ve üst sınırlı bir üçgen bütçesi uygulanmalı.
       "vertices": [[0, 0, 0]],
       "edges": [{ "kind": "circle", "centre": [20, 10, 30], "axis": [0, 0, 1],
                   "radius": 4.0, "length": 25.13 }],
-      "faces": [{ "kind": "cylinder", "axis": [0, 0, 1], "radius": 4.0 }]
+      "faces": [{ "kind": "cylinder", "axis": [0, 0, 1],
+                  "position": [20, 10, 0], "radius": 4.0 }]
     }
   }
 }

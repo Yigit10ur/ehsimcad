@@ -7,13 +7,19 @@
  * the surfaces rather than between the two places the cursor happened to land
  * on them, which is what a CAD viewer does.
  *
+ * A round face is its own question, and one this used to refuse: a cylinder
+ * knew which way its axis pointed and not where that axis was, so two bores
+ * could not be measured apart. The face carries its position now, so both
+ * answers come from the B-rep and neither depends on where the cursor landed
+ * -- which matters, because a point on a curved face is off the true surface
+ * by the tessellation error. The click chooses the hole; it supplies no
+ * number.
+ *
  * What is deliberately not offered:
  *
- * Curved faces. A cylinder's `FaceGeometry` carries its radius and the
- * direction of its axis, but not where that axis is, and the point under the
- * cursor is off the true surface by the tessellation error. There is nothing
- * here to be exact with, and this application does not offer a measurement it
- * cannot stand behind.
+ * The diameter of a cone. Its radius depends where along it you look, so one
+ * number would be true of one height and wrong everywhere else. Its axis is
+ * exact, so a countersink still has a distance to the next hole.
  *
  * A distance between two faces that are not parallel. They meet; the distance
  * between them is zero somewhere and anything you like elsewhere. The angle
@@ -187,7 +193,9 @@ export type MeasureMode =
   | 'edge-length'
   | 'edge-radius'
   | 'edge-diameter'
+  | 'bore-diameter'
   | 'face-distance'
+  | 'hole-distance'
   | 'point-distance'
   | 'face-angle';
 
@@ -225,11 +233,25 @@ export const MEASURE_MODES: MeasureModeSpec[] = [
     hint: 'Click a circular edge',
   },
   {
+    id: 'bore-diameter',
+    label: 'Diameter of round face',
+    picks: 1,
+    wants: 'face',
+    hint: 'Click inside a hole, or the side of a boss',
+  },
+  {
     id: 'face-distance',
     label: 'Distance between faces',
     picks: 2,
     wants: 'face',
     hint: 'Click two flat faces',
+  },
+  {
+    id: 'hole-distance',
+    label: 'Distance between holes',
+    picks: 2,
+    wants: 'face',
+    hint: 'Click inside two holes',
   },
   {
     id: 'point-distance',
@@ -259,6 +281,44 @@ export type MeasureOutcome =
   | { ok: false; reason: string };
 
 const refuse = (reason: string): MeasureOutcome => ({ ok: false, reason });
+
+interface RoundFace {
+  axis: THREE.Vector3;
+  /** A point the axis passes through, which is not the centre of the face. */
+  position: THREE.Vector3;
+}
+
+/**
+ * The axis of a round face, as a line in space.
+ *
+ * Cones as well as cylinders. A countersink is a cone, and the hole it opens
+ * is at a definite place whatever its radius does along the way.
+ */
+function axisOf(target: SnapTarget): RoundFace | null {
+  const face: FaceGeometry | undefined = target.face;
+  if (target.kind !== 'face' || !face) return null;
+  if (face.kind !== 'cylinder' && face.kind !== 'cone') return null;
+  if (!face.axis || !face.position) return null;
+
+  const axis = new THREE.Vector3(...face.axis);
+  if (axis.lengthSq() === 0) return null;
+
+  return { axis: axis.normalize(), position: new THREE.Vector3(...face.position) };
+}
+
+/** A cylinder, which unlike a cone has one radius the whole way along. */
+function boreOf(target: SnapTarget): (RoundFace & { radius: number }) | null {
+  const face = target.face;
+  const round = axisOf(target);
+  if (!round || !face || face.kind !== 'cylinder' || !face.radius) return null;
+  return { ...round, radius: face.radius };
+}
+
+/** The point on a face's axis nearest some other point. */
+function footOn(round: RoundFace, point: THREE.Vector3): THREE.Vector3 {
+  const along = point.clone().sub(round.position).dot(round.axis);
+  return round.position.clone().addScaledVector(round.axis, along);
+}
 
 function circleOf(target: SnapTarget) {
   const edge = target.edge;
@@ -317,6 +377,80 @@ export function measureInMode(
           value: wantsDiameter ? circle.radius * 2 : circle.radius,
           unit: 'mm',
           description: wantsDiameter ? 'diameter' : 'radius',
+        },
+      };
+    }
+
+    case 'bore-diameter': {
+      const bore = boreOf(a);
+      if (!bore) {
+        return refuse(
+          axisOf(a)
+            ? 'That face is a cone, and a cone has a different diameter at every height — measure a circular edge of it instead.'
+            : 'That is not a round face — click the inside of a hole or the side of a boss.',
+        );
+      }
+
+      /*
+       * Drawn across the true circle rather than through the point that was
+       * clicked. On a curved face that point sits off the surface by the
+       * tessellation error, so a line through it would miss the face it is
+       * measuring. Which side it fell on is worth keeping though, so the
+       * diameter is drawn facing whoever clicked.
+       */
+      const centre = footOn(bore, a.point);
+      const towards = a.point.clone().sub(centre);
+      if (towards.lengthSq() === 0) return refuse('Click on the face itself.');
+      towards.setLength(bore.radius);
+
+      return {
+        ok: true,
+        result: {
+          kind: 'length',
+          from: centre.clone().sub(towards),
+          to: centre.clone().add(towards),
+          value: bore.radius * 2,
+          unit: 'mm',
+          description: 'diameter',
+        },
+      };
+    }
+
+    case 'hole-distance': {
+      if (!b) return refuse('Pick a second hole.');
+
+      const first = axisOf(a);
+      const second = axisOf(b);
+      if (!first || !second) {
+        return refuse('Both picks have to be round faces — click inside each hole.');
+      }
+
+      const alignment = first.axis.dot(second.axis);
+      if (Math.abs(alignment) < PARALLEL) {
+        return refuse(
+          `Those holes are drilled ${angleBetween(alignment).toFixed(1)}° apart, so there is no one distance between them — the gap changes along their length.`,
+        );
+      }
+
+      /*
+       * Between the axes rather than between the surfaces: centre to centre is
+       * what a drawing dimensions on a pair of holes, and what a jig is set
+       * from. Drawn level with the click so the line lies where the eye
+       * expects it, and the length is the same wherever it is drawn because
+       * the axes are parallel.
+       */
+      const from = footOn(first, a.point);
+      const to = footOn(second, from);
+
+      return {
+        ok: true,
+        result: {
+          kind: 'gap',
+          from,
+          to,
+          value: from.distanceTo(to),
+          unit: 'mm',
+          description: 'between hole centres',
         },
       };
     }

@@ -16,7 +16,7 @@ import { formatIn, formatMeasurement, measure, measureInMode } from '@/lib/measu
 import type { SnapTarget } from '@/lib/snap';
 
 function plane(normal: Vec3): FaceGeometry {
-  return { kind: 'plane', normal, axis: null, radius: null };
+  return { kind: 'plane', normal, axis: null, radius: null, position: null };
 }
 
 function onFace(point: Vec3, normal: Vec3): SnapTarget {
@@ -147,7 +147,7 @@ describe('anything else', () => {
 
     const flat = onFace([0, 0, 0], [0, 0, 1]);
 
-    expect(measure(flat, curved({ kind: 'cylinder', normal: null, axis: [0, 0, 1], radius: 5 })).kind).toBe('length');
+    expect(measure(flat, curved({ kind: 'cylinder', normal: null, axis: [0, 0, 1], radius: 5, position: null })).kind).toBe('length');
 
     /*
      * And one that carries a normal anyway. The rule is the kind of surface,
@@ -155,14 +155,14 @@ describe('anything else', () => {
      * point says nothing about the rest of it, and a gap measured from it
      * would be square to nothing.
      */
-    expect(measure(flat, curved({ kind: 'cone', normal: [0, 0, 1], axis: [0, 0, 1], radius: 3 })).kind).toBe('length');
-    expect(measure(flat, curved({ kind: 'sphere', normal: [0, 0, 1], axis: null, radius: 3 })).kind).toBe('length');
+    expect(measure(flat, curved({ kind: 'cone', normal: [0, 0, 1], axis: [0, 0, 1], radius: 3, position: null })).kind).toBe('length');
+    expect(measure(flat, curved({ kind: 'sphere', normal: [0, 0, 1], axis: null, radius: 3, position: null })).kind).toBe('length');
   });
 
   it('falls back when a plane arrived without a normal', () => {
     const noNormal: SnapTarget = {
       ...onFace([0, 0, 4], [0, 0, 1]),
-      face: { kind: 'plane', normal: null, axis: null, radius: null },
+      face: { kind: 'plane', normal: null, axis: null, radius: null, position: null },
     };
 
     expect(measure(onFace([0, 0, 0], [0, 0, 1]), noNormal).kind).toBe('length');
@@ -463,5 +463,158 @@ describe('two faces that are not parallel', () => {
     expect(result.kind).toBe('gap');
     expect(result.description).toBe('between faces');
     expect(result.value).toBeCloseTo(4, 9);
+  });
+});
+
+/*
+ * ---------------------------------------------------------------------------
+ * Round faces.
+ *
+ * These used to be refused outright, for a reason that was true at the time: a
+ * cylinder knew which way its axis pointed and not where that axis was, so
+ * there was nothing exact to measure between. The face carries its position
+ * now, and the two answers that unlocks are the two a machinist asks of a
+ * plate -- how big is that hole, and how far apart are those two.
+ *
+ * Neither answer comes from the click. On a curved face the point under the
+ * cursor sits off the true surface by the tessellation error, so the click
+ * chooses which hole is meant and supplies no number.
+ * ---------------------------------------------------------------------------
+ */
+
+function round(kind: 'cylinder' | 'cone', axis: Vec3, position: Vec3, radius: number): FaceGeometry {
+  return { kind, normal: null, axis, radius, position };
+}
+
+function onRound(point: Vec3, face: FaceGeometry): SnapTarget {
+  return {
+    point: new THREE.Vector3(...point),
+    kind: 'face',
+    partId: 'n1_1',
+    index: 0,
+    label: face.kind,
+    face,
+  };
+}
+
+/** A bore of radius 6 down Z, clicked on its wall at z = 4. */
+function bore(x: number, y: number, radius = 6): SnapTarget {
+  return onRound([x + radius, y, 4], round('cylinder', [0, 0, 1], [x, y, 0], radius));
+}
+
+describe('the diameter of a round face', () => {
+  it('comes from the B-rep, not from where the cursor landed', () => {
+    // Clicked inside the true surface, as a tessellated cylinder always is.
+    const sloppy = onRound([5.7, 0, 4], round('cylinder', [0, 0, 1], [0, 0, 0], 6));
+    const outcome = measureInMode('bore-diameter', sloppy);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.value).toBeCloseTo(12, 10);
+    expect(outcome.result.description).toBe('diameter');
+  });
+
+  it('draws the line across the circle, on the side that was clicked', () => {
+    const outcome = measureInMode('bore-diameter', bore(0, 0));
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    // Level with the click at z = 4, and exactly a diameter long.
+    expect(outcome.result.from.toArray()).toEqual([-6, 0, 4]);
+    expect(outcome.result.to.toArray()).toEqual([6, 0, 4]);
+  });
+
+  it('refuses a cone, which has a different diameter at every height', () => {
+    const cone = onRound([3, 0, 1], round('cone', [0, 0, 1], [0, 0, 0], 3));
+    const outcome = measureInMode('bore-diameter', cone);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toContain('cone');
+  });
+
+  it('refuses a flat face', () => {
+    const outcome = measureInMode('bore-diameter', onFace([0, 0, 0], [0, 0, 1]));
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toContain('not a round face');
+  });
+});
+
+describe('the distance between two holes', () => {
+  it('is centre to centre, whichever side of each hole was clicked', () => {
+    // Two bores 50 apart, clicked on the near side of one and the far side of
+    // the other: 38 mm apart on the walls, 50 mm apart where it counts.
+    const first = onRound([-6, 0, 4], round('cylinder', [0, 0, 1], [0, 0, 0], 6));
+    const second = onRound([44, 0, 4], round('cylinder', [0, 0, 1], [50, 0, 0], 6));
+
+    const outcome = measureInMode('hole-distance', first, second);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.value).toBeCloseTo(50, 10);
+    expect(outcome.result.kind).toBe('gap');
+    expect(outcome.result.description).toBe('between hole centres');
+  });
+
+  it('draws the line level with the click, between the two axes', () => {
+    const outcome = measureInMode('hole-distance', bore(0, 0), bore(50, 0));
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.from.toArray()).toEqual([0, 0, 4]);
+    expect(outcome.result.to.toArray()).toEqual([50, 0, 4]);
+  });
+
+  it('is the same number wherever each axis records its own origin', () => {
+    /*
+     * A face's position is a point the axis passes through, not the centre of
+     * the hole: OCCT is free to put it anywhere along the line. Two holes
+     * whose recorded points sit at different heights are still 50 apart.
+     */
+    const first = onRound([6, 0, 4], round('cylinder', [0, 0, 1], [0, 0, -30], 6));
+    const second = onRound([56, 0, 4], round('cylinder', [0, 0, 1], [50, 0, 90], 6));
+
+    const outcome = measureInMode('hole-distance', first, second);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.value).toBeCloseTo(50, 10);
+  });
+
+  it('measures a hole against a countersink, whose axis is exact too', () => {
+    const sink = onRound([54, 0, 1], round('cone', [0, 0, 1], [50, 0, 0], 4));
+    const outcome = measureInMode('hole-distance', bore(0, 0), sink);
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result.value).toBeCloseTo(50, 10);
+  });
+
+  it('refuses two holes drilled at an angle to each other', () => {
+    const across = onRound([50, 6, 4], round('cylinder', [1, 0, 0], [50, 0, 0], 6));
+    const outcome = measureInMode('hole-distance', bore(0, 0), across);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toContain('90.0° apart');
+  });
+
+  it('refuses a flat face', () => {
+    const flat = onFace([0, 0, 0], [0, 0, 1]);
+    const outcome = measureInMode('hole-distance', bore(0, 0), flat);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toContain('round faces');
+  });
+
+  it('asks for the second hole before answering', () => {
+    const outcome = measureInMode('hole-distance', bore(0, 0));
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toContain('second hole');
   });
 });

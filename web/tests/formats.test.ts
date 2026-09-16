@@ -124,6 +124,20 @@ describe('rejectionReason', () => {
       expect(reason).toContain(kind);
       expect(reason).toContain('Export it to STEP');
     });
+
+    it.each([
+      ['bracket.ipt', 'Inventor'],
+      ['bracket.sldprt', 'SolidWorks'],
+      ['frame.catproduct', 'CATIA'],
+    ])('says which application exports %s', (filename, application) => {
+      /*
+       * Whoever reads this is quite likely the one without a seat: serving the
+       * machines that have no CAD licence is what this platform is for. "Export
+       * it to STEP" is then an instruction they cannot carry out, and naming
+       * the application is what turns it into one they can pass on.
+       */
+      expect(rejectionReason(filename)).toContain(`to STEP from ${application}`);
+    });
   });
 
   describe('drawings', () => {
@@ -140,6 +154,8 @@ describe('rejectionReason', () => {
       // them in circles.
       expect(reason).not.toContain('Export it to STEP');
       expect(reason).toContain('the part or assembly it documents');
+      // The export is still somebody's to do, and the drawing says whose.
+      expect(reason).toContain(`to STEP from ${application}`);
     });
 
     it.each(['plan.dxf', 'plan.DXF', 'scan.png', 'scan.jpg'])(
@@ -194,6 +210,10 @@ describe('rejectionReason', () => {
     const reason = rejectionReason('housing.prt') ?? '';
     expect(reason).toContain('native CAD');
     expect(reason).toContain('Export it to STEP');
+    // And does not invent one to export from. "Export it from a CAD" tells
+    // nobody anything, so that half of the advice is left off here.
+    expect(reason).toContain('Export it to STEP and upload');
+    expect(reason).not.toContain('to STEP from');
   });
 
   it('turns away an unrelated file and lists what would work', () => {

@@ -93,6 +93,11 @@ export default async function EstimatePage() {
                 through
               </li>
               <li>A turned part with no centre line, which is what tells it the axis</li>
+              <li>
+                A bore or groove shown with hidden lines that stop against an edge
+                rather than at a corner. It is left out of the outline, and the model
+                says an edge was — drawn as a section, the same part reads
+              </li>
             </ul>
           </div>
         </div>

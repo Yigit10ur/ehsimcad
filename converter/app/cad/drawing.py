@@ -11,6 +11,11 @@ on one side of it, and hand OCCT a closed wire to revolve. The result is a real
 B-rep -- exact faces, exact edges, a volume that can be measured -- and the only
 guess in it is that the part is a solid of revolution at all.
 
+A sheet is divided into views before any of that. It holds more than one
+drawing and more than one centre line, and an axis taken from the wrong one is
+the worst thing this can do: not an obviously broken model, but a convincing
+one with every radius wrong.
+
 DXF rather than an image on purpose. In DXF the dimensions, the notes, the
 hatching and the title block are separate entity types, so telling the part
 from the annotation is a filter rather than a computer vision problem. Nothing
@@ -64,6 +69,17 @@ AXIS_LAYER_WORDS = ("CENTER", "CENTRE", "AXIS", "EKSEN", "MITTE")
 
 # $INSUNITS, in millimetres per unit. 0 means the file does not say.
 UNIT_SCALE = {1: 25.4, 2: 304.8, 4: 1.0, 5: 10.0, 6: 1000.0, 11: 2.54e-5}
+
+# How far apart two pieces of geometry can be and still belong to the same
+# view, as a fraction of the sheet's own diagonal.
+#
+# A fraction rather than a figure in millimetres because the gap between two
+# views is a property of the sheet, not of the part: it is whitespace a
+# draughtsman left to keep one drawing from reading as another, and it is left
+# at much the same proportion whether the part is a 5 mm pin or a 5 m shaft.
+# Wide enough to swallow the gaps inside one view, which are the width of a
+# line; narrow enough to fall well short of the space between two.
+VIEW_GAP = 0.02
 
 Point = tuple[float, float]
 
@@ -144,6 +160,43 @@ class Axis:
         is what the note on the model ends up saying."""
         dx, dy = self.direction
         return dx * (p[1] - self.point[1]) - dy * (p[0] - self.point[0])
+
+
+@dataclass
+class View:
+    """One group of geometry on the sheet, and the centre lines drawn for it.
+
+    A sheet is not a drawing. It carries several -- a longitudinal view, an end
+    view, a section, a detail -- and a title block, which is none of them.
+    Until they are told apart, every rule that has to pick the part out is
+    picking it out of a heap, and the rules here said so: the one that chooses
+    the profile is written the way it is to keep from handing back the title
+    block.
+
+    Told apart by whitespace, because whitespace is what separates them on
+    paper. One view's outline joins end to end, so its curves cluster at any
+    distance worth the name; two views stand apart by a gap somebody left on
+    purpose. Nothing here reads what a view *is* -- only that it is one of
+    several, which is enough to stop the sheet being read as one drawing.
+    """
+
+    curves: list[Curve]
+    axis_candidates: list[Curve]
+
+    @property
+    def box(self) -> tuple[float, float, float, float]:
+        return _bbox(self.curves)
+
+    @property
+    def has_axis(self) -> bool:
+        """Whether a straight centre line was drawn for this view.
+
+        Straight, because what happens next revolves about a line. A view with
+        only an arc centre line on it -- a bolt circle, say -- is not one this
+        can read, and saying so here keeps it out of the running rather than
+        failing on it later.
+        """
+        return any(not curve.is_arc for curve in self.axis_candidates)
 
 
 @dataclass
@@ -364,6 +417,262 @@ def _samples(curve: Curve, count: int = 7) -> list[Point]:
     ]
 
 
+def _curve_box(curve: Curve) -> tuple[float, float, float, float]:
+    """One curve's bounding box, an arc's bulge included."""
+    points = _samples(curve)
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _diagonal(box: tuple[float, float, float, float]) -> float:
+    """How big a box is, as one number."""
+    return math.hypot(box[2] - box[0], box[3] - box[1])
+
+
+def _box_gap(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> float:
+    """How far apart two boxes are, and zero if they touch or overlap."""
+    dx = max(a[0] - b[2], b[0] - a[2], 0.0)
+    dy = max(a[1] - b[3], b[1] - a[3], 0.0)
+    return math.hypot(dx, dy)
+
+
+def _cells(box: tuple[float, float, float, float], size: float):
+    """The grid squares a box covers.
+
+    Only so that each curve is compared against its neighbours rather than
+    against the whole sheet. The squares are the width of the gap being looked
+    for, so anything near enough to matter is at most one square away.
+    """
+    x0, y0, x1, y1 = box
+    for cx in range(math.floor(x0 / size), math.floor(x1 / size) + 1):
+        for cy in range(math.floor(y0 / size), math.floor(y1 / size) + 1):
+            yield (cx, cy)
+
+
+def _has_width(curves: list[Curve], tol: float) -> bool:
+    """Whether a group of geometry spreads out in both directions."""
+    x0, y0, x1, y1 = _bbox(curves)
+    return min(x1 - x0, y1 - y0) > tol
+
+
+def _reflected_box(
+    box: tuple[float, float, float, float], line: Curve
+) -> tuple[float, float, float, float]:
+    """A box mirrored across a line.
+
+    The corners are reflected and boxed again, which is the same box for a
+    horizontal or vertical centre line and a slightly generous one for a
+    centre line drawn at an angle. Generous the safe way: it can only make two
+    halves look less alike than they are.
+    """
+    ax, ay = line.start
+    dx, dy = _normalise((line.end[0] - line.start[0], line.end[1] - line.start[1]))
+
+    points = []
+    x0, y0, x1, y1 = box
+    for px, py in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        along = (px - ax) * dx + (py - ay) * dy
+        foot = (ax + along * dx, ay + along * dy)
+        points.append((2 * foot[0] - px, 2 * foot[1] - py))
+
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _join_mirrored(views: list[View], gap: float) -> list[View]:
+    """Put back together the halves of a view that whitespace pulled apart.
+
+    A turned part is drawn on both sides of its centre line, and the two halves
+    stand apart by the bore. A bore is a feature of the part, not a gap in the
+    layout: on a thin-walled tube it is most of the drawing, far wider than the
+    whitespace between two views, so whitespace alone cuts one view in two.
+
+    What puts it back is that the halves are each other's reflection in the
+    line between them. Two views stacked on the sheet are not -- they show
+    different things -- so this joins the one case it is meant to and leaves
+    the sheet's own divisions alone.
+    """
+    parent = list(range(len(views)))
+    boxes = [view.box for view in views]
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, a in enumerate(views):
+        for j in range(i + 1, len(views)):
+            shared = [
+                line for line in a.axis_candidates if line in views[j].axis_candidates
+            ]
+            if not any(
+                all(
+                    abs(p - q) <= gap
+                    for p, q in zip(
+                        _reflected_box(boxes[i], line), boxes[j], strict=True
+                    )
+                )
+                for line in shared
+            ):
+                continue
+            ra, rb = root(i), root(j)
+            if ra != rb:
+                parent[rb] = ra
+
+    joined: dict[int, View] = {}
+    for i, view in enumerate(views):
+        into = joined.get(root(i))
+        if into is None:
+            joined[root(i)] = View(list(view.curves), list(view.axis_candidates))
+            continue
+        into.curves.extend(view.curves)
+        into.axis_candidates.extend(
+            line for line in view.axis_candidates if line not in into.axis_candidates
+        )
+
+    return list(joined.values())
+
+
+def _runs_along(line: Curve, view: View, gap: float) -> bool:
+    """Whether a centre line is drawn the length of a group of geometry.
+
+    Not whether it is near it. A bored part stands clear of its own axis by
+    the bore radius, and a bore can be most of the part -- so a rule about
+    distance takes the axis away from the one view that needs it most.
+
+    Length instead. A centre line is drawn along the part and a little past it
+    at each end, which is what ISO 128 asks for, so a line reaching across a
+    group was drawn for that group and a line stopping inside it was not. The
+    title block is the case this has to get right, and it gets it right for
+    the reason that matters: the centre line does not reach across it.
+
+    Or simply near, for a drawing where the centre line was not run out. Short
+    is a convention broken, not a different axis.
+    """
+    if _box_gap(_curve_box(line), view.box) <= gap:
+        return True
+
+    if math.dist(line.start, line.end) <= gap:
+        return False
+
+    dx, dy = _normalise((line.end[0] - line.start[0], line.end[1] - line.start[1]))
+
+    def along(p: Point) -> float:
+        return p[0] * dx + p[1] * dy
+
+    x0, y0, x1, y1 = view.box
+    reach = sorted(along(p) for p in (line.start, line.end))
+    span = sorted(along(p) for p in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)))
+    return reach[0] <= span[0] + gap and reach[-1] >= span[-1] - gap
+
+
+def _lay_axes_over(views: list[View], candidates: list[Curve], gap: float) -> None:
+    """Give each view the centre lines that were drawn for it.
+
+    Running the length of a view is what qualifies a line, and then nearness
+    decides between the views that qualify: a centre line belongs to the view
+    it was drawn for, not to everything it happens to be no shorter than. A
+    sheet is laid out in aligned rows and columns, so one view's centre line
+    reaches clear across whatever is drawn above and below it, and without the
+    second test it would hand its axis to all of them.
+
+    Nearest, and whatever ties with it. The tie is the point: a turned part is
+    drawn on both sides of its centre line and its two halves stand the same
+    distance off, so the halves come back with the line they share -- which is
+    what lets them be recognised afterwards as one view cut in two.
+    """
+    boxes = [view.box for view in views]
+
+    for line in candidates:
+        # An arc is no use as an axis and is not offered as one. Leaving it
+        # out here is what keeps `has_axis` from promising a view a reading
+        # that `find_axis` would then refuse.
+        if line.is_arc:
+            continue
+
+        box = _curve_box(line)
+        along = [i for i, view in enumerate(views) if _runs_along(line, view, gap)]
+        if not along:
+            continue
+
+        nearest = min(_box_gap(box, boxes[i]) for i in along)
+        for i in along:
+            if _box_gap(box, boxes[i]) <= nearest + gap:
+                views[i].axis_candidates.append(line)
+
+
+def split_views(outline: list[Curve], axis_candidates: list[Curve]) -> list[View]:
+    """The sheet's geometry in groups, each set apart from the rest by whitespace.
+
+    Only the outline is grouped. The centre lines are kept out of the grouping
+    on purpose: a centre line is drawn running past the part at both ends,
+    often far enough to reach whatever is drawn next to it, and one line drawn
+    long would otherwise sew two views into one. So the groups are formed from
+    part geometry alone, and the centre lines are laid over them afterwards --
+    each on whichever groups it was drawn for, which may be more than one.
+
+    Pure 2D, like everything above it: the grouping is where a reading of a
+    sheet can go wrong quietly, so it is testable without OpenCascade.
+    """
+    if not outline:
+        return []
+
+    gap = _diagonal(_bbox(outline)) * VIEW_GAP
+    if gap <= 0:
+        # Everything at one point. Not a sheet with views on it.
+        return [View(list(outline), list(axis_candidates))]
+
+    boxes = [_curve_box(curve) for curve in outline]
+    parent = list(range(len(outline)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    occupants: dict[tuple[int, int], list[int]] = {}
+    for i, box in enumerate(boxes):
+        for cell in _cells(box, gap):
+            occupants.setdefault(cell, []).append(i)
+
+    for i, box in enumerate(boxes):
+        reach = (box[0] - gap, box[1] - gap, box[2] + gap, box[3] + gap)
+        for cell in _cells(reach, gap):
+            for j in occupants.get(cell, ()):
+                if j <= i or _box_gap(box, boxes[j]) > gap:
+                    continue
+                a, b = root(i), root(j)
+                if a != b:
+                    parent[b] = a
+
+    grouped: dict[int, list[Curve]] = {}
+    for i, curve in enumerate(outline):
+        grouped.setdefault(root(i), []).append(curve)
+
+    # A group with no width in one direction is a stray line, not a view: a
+    # construction line left in, or the axis drawn a second time as ordinary
+    # geometry. It encloses nothing, so no reading is lost by leaving it out
+    # -- and leaving it in would let it stand between a centre line and the
+    # view that line was drawn for, being nearer than the part itself.
+    tol = tolerance_for(outline)
+    views = [View(curves, []) for curves in grouped.values() if _has_width(curves, tol)]
+
+    _lay_axes_over(views, axis_candidates, gap)
+    views = _join_mirrored(views, gap)
+
+    # Biggest first, so that a tie anywhere downstream falls to the group that
+    # carries more of the drawing rather than to whichever happened to be read
+    # first.
+    views.sort(key=lambda view: -_diagonal(view.box))
+    return views
+
+
 def find_axis(candidates: list[Curve]) -> Axis:
     """The line to revolve about, taken from the drawing's centre line.
 
@@ -510,6 +819,41 @@ def section_area(curves: list[Curve]) -> float:
     return abs(total)
 
 
+def _closed_count(curves: list[Curve], tol: float) -> int:
+    """How many closed outlines a group of geometry holds.
+
+    For the groups that were not read. There is no axis out there to clip
+    against, and none is wanted: the question is only how much was left on the
+    sheet, so anything that closes and encloses something counts once.
+    """
+    try:
+        chains = _chains(curves, tol)
+    except DrawingError:
+        # Lines crossing inside a group nobody read is not a reason to refuse
+        # the drawing. It is a reason not to claim a count for that group.
+        return 1
+
+    return sum(
+        1
+        for chain in chains
+        if math.dist(chain[0].start, chain[-1].end) <= tol
+        and section_area(chain) > tol * tol
+    )
+
+
+def _outline_note(count: int) -> list[str]:
+    """What is said about the closed outlines that did not become the part.
+
+    Said rather than dropped: a closed outline left on the sheet is the first
+    thing worth knowing when the answer comes out the wrong shape.
+    """
+    if count == 1:
+        return ["1 other closed outline on the sheet"]
+    if count > 1:
+        return [f"{count} other closed outlines on the sheet"]
+    return []
+
+
 def _loops_on(
     curves: list[Curve], axis: Axis, keep: int, tol: float
 ) -> list[list[Curve]]:
@@ -555,14 +899,21 @@ def _signature(candidate: tuple[float, float, int, list[Curve]]) -> tuple[float,
 
 def profile_of(
     outline: list[Curve], axis: Axis, tol: float
-) -> tuple[list[Curve], list[str], list[str]]:
+) -> tuple[list[Curve], list[str], int, tuple[float, float]]:
     """The outline to revolve, chosen from both sides of the axis.
+
+    One view's worth of outline, since the sheet has been split by then. What
+    is left to choose between is the two sides of the centre line, and a
+    drawing office draws both.
 
     Both sides, rather than picking one by which carries more geometry: a title
     block is more line than a small part, and a rule that counts length hands
     back the title block on a drawing where it happens to sit on the busier
     side. What identifies the profile is that it is the closed outline lying
     against the axis, and that holds whichever side it was drawn on.
+
+    Reports how near the axis the winner lies and how much it encloses, which
+    is what one view is weighed against another with.
     """
     by_side: dict[int, list[tuple[float, float, int, list[Curve]]]] = {}
     for keep in (1, -1):
@@ -606,13 +957,8 @@ def profile_of(
         else:
             others += 1
     others -= 1  # the one being revolved
-    ignored = []
-    if others == 1:
-        ignored.append("1 other closed outline on the sheet")
-    elif others > 1:
-        ignored.append(f"{others} other closed outlines on the sheet")
 
-    return loop, assumptions, ignored
+    return loop, assumptions, others, (distance, negative_area)
 
 
 def read_profile(source: Path) -> Profile:
@@ -632,6 +978,12 @@ def profile_from(
     thing: curves, and the ones among them that were drawn as a centre line.
     From here on there is nothing left that knows which it was, which is why
     this is one function rather than two.
+
+    The sheet is divided into views first, and then read one view at a time.
+    The difference is the axis: a sheet holds more than one centre line -- an
+    end view has two crossing it, a section has its own -- and taking the
+    longest of them for the whole sheet is how a part comes out with every
+    radius wrong and nothing to show for it.
     """
     if not outline:
         raise DrawingError(
@@ -639,19 +991,62 @@ def profile_from(
         )
 
     tol = tolerance_for(outline + candidates)
-    axis = find_axis(candidates)
-    loop, assumptions, left_out = profile_of(outline, axis, tol)
+    views = split_views(outline, candidates)
+    readable = [view for view in views if view.has_axis]
+
+    # A sheet where no group has a centre line drawn for it is one this has
+    # no division of, so it is not divided: reading the whole of it at once is what this
+    # did before views existed, and is blinder rather than wrong. Refusing a
+    # drawing that reads today would be the worse trade.
+    divided = bool(readable)
+    if not divided:
+        readable = [View(list(outline), list(candidates))]
+
+    best: tuple[tuple[float, float], View, Axis, list[Curve], list[str], int] | None
+    best = None
+    refused: DrawingError | None = None
+    for view in readable:
+        axis = find_axis(view.axis_candidates)
+        try:
+            loop, said, others, score = profile_of(view.curves, axis, tol)
+        except DrawingError as error:
+            # One view that cannot be read is ordinary: an end view has a
+            # centre line and no profile beside it. Keep the first refusal in
+            # case every view turns out that way.
+            refused = refused or error
+            continue
+        if best is None or score < best[0]:
+            best = (score, view, axis, loop, said, others)
+
+    if best is None:
+        # Unreachable with nothing to raise: `readable` is never empty, so
+        # either a view was read or a view refused.
+        raise refused  # type: ignore[misc]
+
+    _score, chosen, axis, loop, said, others = best
+
+    elsewhere = (
+        sum(_closed_count(view.curves, tol) for view in views if view is not chosen)
+        if divided
+        else 0
+    )
+
+    assumptions = [
+        "read as a solid of revolution: the part is taken to be turned",
+        f"axis from the {axis.found_by}",
+    ]
+    if divided and len(views) > 1:
+        assumptions.append(
+            f"one of {len(views)} groups of geometry on the sheet: "
+            "the one this centre line runs along"
+        )
 
     return Profile(
         axis=axis,
         curves=loop,
         units=units,
-        assumptions=[
-            "read as a solid of revolution: the part is taken to be turned",
-            f"axis from the {axis.found_by}",
-            *assumptions,
-        ],
-        ignored=[*left_out, *ignored],
+        assumptions=[*assumptions, *said],
+        ignored=[*_outline_note(others + elsewhere), *ignored],
     )
 
 
